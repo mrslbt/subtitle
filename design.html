@@ -1,0 +1,1017 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>earpiece</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:ital,opsz,wght@0,9..40,300;0,9..40,400;0,9..40,500;1,9..40,400&family=DM+Mono:wght@300;400&family=Noto+Sans+JP:wght@300;400;500&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg-void: #06060A;
+      --bg-surface: #0E0E16;
+      --bg-elevated: rgba(20, 20, 34, 0.65);
+      --accent-warm: #F0A030;
+      --accent-cool: #00D0FF;
+      --accent-warm-soft: rgba(240, 160, 48, 0.12);
+      --accent-cool-soft: rgba(0, 208, 255, 0.10);
+      --accent-warm-glow: rgba(240, 160, 48, 0.35);
+      --accent-cool-glow: rgba(0, 208, 255, 0.30);
+      --text-primary: #E6E1DB;
+      --text-secondary: #6B6580;
+      --text-dim: #2E2B40;
+      --border: #1A1928;
+      --font-display: 'Syne', sans-serif;
+      --font-body: 'DM Sans', sans-serif;
+      --font-mono: 'DM Mono', monospace;
+      --font-jp: 'Noto Sans JP', sans-serif;
+      --safe-top: env(safe-area-inset-top, 20px);
+      --safe-bottom: env(safe-area-inset-bottom, 20px);
+    }
+
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    html, body {
+      height: 100%;
+      overflow: hidden;
+      background: var(--bg-void);
+      color: var(--text-primary);
+      font-family: var(--font-body);
+      -webkit-font-smoothing: antialiased;
+      -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+
+    /* ── Noise grain overlay ── */
+    .grain {
+      position: fixed; inset: 0; z-index: 9999;
+      pointer-events: none;
+      opacity: 0.035;
+      mix-blend-mode: overlay;
+    }
+
+    /* ── Atmospheric background ── */
+    .atmosphere {
+      position: fixed; inset: 0; z-index: 0;
+      overflow: hidden;
+    }
+    .atmosphere::before {
+      content: '';
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 200vmax; height: 200vmax;
+      transform: translate(-50%, -50%);
+      background: radial-gradient(circle, rgba(0,208,255,0.03) 0%, transparent 50%),
+                  radial-gradient(circle at 30% 70%, rgba(240,160,48,0.02) 0%, transparent 40%);
+      animation: atmosphereDrift 30s ease-in-out infinite alternate;
+    }
+    .atmosphere .grid {
+      position: absolute; inset: 0;
+      background-image:
+        radial-gradient(circle, transparent 0%, var(--bg-void) 70%),
+        repeating-conic-gradient(from 0deg, transparent 0deg, transparent 89deg, rgba(255,255,255,0.015) 89deg, rgba(255,255,255,0.015) 90deg);
+      background-size: 100% 100%, 100% 100%;
+      animation: gridPulse 8s ease-in-out infinite alternate;
+    }
+    @keyframes atmosphereDrift {
+      to { transform: translate(-50%, -50%) rotate(15deg) scale(1.1); }
+    }
+    @keyframes gridPulse {
+      to { opacity: 0.4; }
+    }
+
+    /* ── App container ── */
+    .app {
+      position: relative; z-index: 1;
+      height: 100%;
+      width: 100%;
+      max-width: 430px;
+      margin: 0 auto;
+    }
+
+    /* ── Screen base ── */
+    .screen {
+      position: absolute; inset: 0;
+      display: flex;
+      flex-direction: column;
+      padding: calc(var(--safe-top) + 16px) 24px calc(var(--safe-bottom) + 16px);
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 0.6s ease, transform 0.6s ease;
+      transform: translateY(8px);
+      will-change: opacity, transform;
+    }
+    .screen.active {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateY(0);
+    }
+
+    /* ════════════════════════════════════
+       LANDING SCREEN
+    ════════════════════════════════════ */
+    .landing {
+      align-items: center;
+      justify-content: center;
+      gap: 0;
+    }
+    .landing .brand {
+      text-align: center;
+      margin-bottom: 8px;
+    }
+    .landing .brand h1 {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 52px;
+      letter-spacing: -2px;
+      line-height: 1;
+      color: var(--text-primary);
+    }
+    .landing .brand h1 .ear {
+      color: var(--accent-warm);
+    }
+    .landing .brand .tagline {
+      font-family: var(--font-mono);
+      font-weight: 300;
+      font-size: 11px;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+      margin-top: 12px;
+    }
+
+    .orb-container {
+      position: relative;
+      width: 260px;
+      height: 260px;
+      margin: 40px 0;
+    }
+    .orb-container canvas {
+      width: 100%;
+      height: 100%;
+    }
+
+    .mode-buttons {
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      width: 100%;
+      max-width: 280px;
+    }
+    .mode-btn {
+      position: relative;
+      display: flex;
+      align-items: center;
+      gap: 14px;
+      padding: 18px 22px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: var(--bg-elevated);
+      -webkit-backdrop-filter: blur(20px);
+      backdrop-filter: blur(20px);
+      cursor: pointer;
+      transition: all 0.3s ease;
+      text-align: left;
+      font-family: var(--font-body);
+      color: var(--text-primary);
+      overflow: hidden;
+    }
+    .mode-btn::before {
+      content: '';
+      position: absolute; inset: 0;
+      border-radius: 16px;
+      opacity: 0;
+      transition: opacity 0.3s ease;
+    }
+    .mode-btn.listen::before {
+      background: linear-gradient(135deg, var(--accent-cool-soft), transparent);
+    }
+    .mode-btn.meeting::before {
+      background: linear-gradient(135deg, var(--accent-warm-soft), transparent);
+    }
+    .mode-btn:active::before, .mode-btn:hover::before {
+      opacity: 1;
+    }
+    .mode-btn:active {
+      transform: scale(0.97);
+    }
+    .mode-btn .icon {
+      position: relative;
+      width: 42px;
+      height: 42px;
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 20px;
+      flex-shrink: 0;
+    }
+    .mode-btn.listen .icon {
+      background: var(--accent-cool-soft);
+    }
+    .mode-btn.meeting .icon {
+      background: var(--accent-warm-soft);
+    }
+    .mode-btn .label {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+    .mode-btn .label .title {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 16px;
+      letter-spacing: -0.3px;
+    }
+    .mode-btn .label .desc {
+      font-size: 12px;
+      color: var(--text-secondary);
+      font-weight: 300;
+    }
+    .mode-btn .arrow {
+      margin-left: auto;
+      color: var(--text-dim);
+      font-size: 18px;
+      transition: transform 0.3s ease, color 0.3s ease;
+    }
+    .mode-btn:active .arrow {
+      transform: translateX(3px);
+      color: var(--text-secondary);
+    }
+
+    /* ════════════════════════════════════
+       LISTEN SCREEN
+    ════════════════════════════════════ */
+    .listen-screen {
+      gap: 0;
+    }
+    .screen-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 8px;
+      min-height: 36px;
+    }
+    .back-btn {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      background: none;
+      border: none;
+      color: var(--text-secondary);
+      font-family: var(--font-body);
+      font-size: 14px;
+      cursor: pointer;
+      padding: 8px 0;
+      transition: color 0.2s;
+    }
+    .back-btn:active { color: var(--text-primary); }
+    .back-btn svg { width: 16px; height: 16px; }
+
+    .status-pill {
+      display: flex;
+      align-items: center;
+      gap: 7px;
+      padding: 6px 14px;
+      border-radius: 100px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+      font-weight: 400;
+      letter-spacing: 0.5px;
+    }
+    .status-pill.cool {
+      background: var(--accent-cool-soft);
+      color: var(--accent-cool);
+    }
+    .status-pill.warm {
+      background: var(--accent-warm-soft);
+      color: var(--accent-warm);
+    }
+    .status-dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      animation: statusPulse 2s ease-in-out infinite;
+    }
+    .status-pill.cool .status-dot { background: var(--accent-cool); }
+    .status-pill.warm .status-dot { background: var(--accent-warm); }
+    @keyframes statusPulse {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.4; transform: scale(0.8); }
+    }
+
+    .listen-orb-area {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      height: 240px;
+      position: relative;
+    }
+    .listen-orb-area canvas {
+      width: 220px;
+      height: 220px;
+    }
+    .listen-orb-area .lang-label {
+      position: absolute;
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+    .listen-orb-area .lang-label.jp {
+      top: 12px; left: 20px;
+      color: var(--accent-cool);
+      opacity: 0.5;
+    }
+    .listen-orb-area .lang-label.en {
+      bottom: 12px; right: 20px;
+      color: var(--accent-warm);
+      opacity: 0.5;
+    }
+
+    /* ── Transcript ── */
+    .transcript-area {
+      flex: 1;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+      mask-image: linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%);
+      -webkit-mask-image: linear-gradient(to bottom, transparent 0%, black 8%, black 92%, transparent 100%);
+      padding: 16px 0;
+      scroll-behavior: smooth;
+    }
+    .transcript-area::-webkit-scrollbar { display: none; }
+
+    .transcript-entry {
+      padding: 14px 0;
+      border-top: 1px solid rgba(255,255,255,0.03);
+      animation: entrySlideIn 0.5s ease-out both;
+    }
+    .transcript-entry:first-child { border-top: none; }
+    @keyframes entrySlideIn {
+      from { opacity: 0; transform: translateY(12px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .transcript-entry .source {
+      font-family: var(--font-jp);
+      font-size: 15px;
+      font-weight: 400;
+      color: var(--accent-cool);
+      line-height: 1.6;
+      margin-bottom: 5px;
+    }
+    .transcript-entry .translation {
+      font-family: var(--font-body);
+      font-size: 14px;
+      font-weight: 400;
+      color: var(--text-primary);
+      line-height: 1.5;
+      opacity: 0;
+      animation: translationFade 0.4s ease-out 0.3s both;
+    }
+    @keyframes translationFade {
+      from { opacity: 0; transform: translateX(-6px); }
+      to { opacity: 0.85; transform: translateX(0); }
+    }
+    .transcript-entry .speaker-tag {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--text-dim);
+      margin-bottom: 6px;
+    }
+    .transcript-entry .speaker-tag.s1 { color: var(--accent-cool); opacity: 0.5; }
+    .transcript-entry .speaker-tag.s2 { color: var(--accent-warm); opacity: 0.5; }
+    .transcript-entry .speaker-tag.s3 { color: #A78BFA; opacity: 0.5; }
+
+    /* ── Controls ── */
+    .controls {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding-top: 16px;
+      gap: 20px;
+    }
+    .stop-btn {
+      position: relative;
+      width: 64px; height: 64px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.1);
+      background: var(--bg-elevated);
+      -webkit-backdrop-filter: blur(20px);
+      backdrop-filter: blur(20px);
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.3s ease;
+    }
+    .stop-btn::before {
+      content: '';
+      position: absolute; inset: -6px;
+      border-radius: 50%;
+      border: 1px solid rgba(255,255,255,0.04);
+      animation: stopRing 3s ease-in-out infinite;
+    }
+    @keyframes stopRing {
+      0%, 100% { transform: scale(1); opacity: 1; }
+      50% { transform: scale(1.08); opacity: 0.3; }
+    }
+    .stop-btn .stop-icon {
+      width: 18px; height: 18px;
+      border-radius: 4px;
+      background: var(--text-primary);
+      transition: transform 0.2s;
+    }
+    .stop-btn:active {
+      transform: scale(0.92);
+      border-color: rgba(255,255,255,0.2);
+    }
+    .stop-btn:active .stop-icon {
+      transform: scale(0.85);
+    }
+
+    .summary-btn {
+      padding: 12px 24px;
+      border-radius: 100px;
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      -webkit-backdrop-filter: blur(20px);
+      backdrop-filter: blur(20px);
+      color: var(--accent-warm);
+      font-family: var(--font-display);
+      font-weight: 600;
+      font-size: 13px;
+      letter-spacing: 0.3px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+    }
+    .summary-btn:active {
+      transform: scale(0.96);
+      background: var(--accent-warm-soft);
+    }
+
+    /* ════════════════════════════════════
+       MEETING SCREEN
+    ════════════════════════════════════ */
+    .meeting-screen .listen-orb-area {
+      height: 160px;
+    }
+    .meeting-screen .listen-orb-area canvas {
+      width: 140px;
+      height: 140px;
+    }
+    .meeting-timer {
+      font-family: var(--font-mono);
+      font-weight: 300;
+      font-size: 13px;
+      color: var(--text-secondary);
+      letter-spacing: 1px;
+    }
+
+    /* ── Speaker bar ── */
+    .speaker-bar {
+      display: flex;
+      gap: 8px;
+      padding: 10px 0;
+      flex-shrink: 0;
+    }
+    .speaker-chip {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      padding: 5px 10px;
+      border-radius: 100px;
+      border: 1px solid var(--border);
+      font-family: var(--font-mono);
+      font-size: 10px;
+      letter-spacing: 0.5px;
+      color: var(--text-secondary);
+      background: var(--bg-surface);
+      transition: all 0.3s ease;
+    }
+    .speaker-chip .dot {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+    }
+    .speaker-chip.active {
+      border-color: transparent;
+    }
+    .speaker-chip.s1 .dot { background: var(--accent-cool); }
+    .speaker-chip.s2 .dot { background: var(--accent-warm); }
+    .speaker-chip.s3 .dot { background: #A78BFA; }
+    .speaker-chip.s1.active { background: var(--accent-cool-soft); color: var(--accent-cool); }
+    .speaker-chip.s2.active { background: var(--accent-warm-soft); color: var(--accent-warm); }
+    .speaker-chip.s3.active { background: rgba(167,139,250,0.1); color: #A78BFA; }
+
+    /* ════════════════════════════════════
+       SUMMARY SCREEN
+    ════════════════════════════════════ */
+    .summary-screen {
+      gap: 20px;
+    }
+    .summary-screen .screen-header {
+      margin-bottom: 0;
+    }
+    .summary-title {
+      font-family: var(--font-display);
+      font-weight: 800;
+      font-size: 28px;
+      letter-spacing: -1px;
+      line-height: 1.2;
+    }
+    .summary-meta {
+      font-family: var(--font-mono);
+      font-size: 11px;
+      color: var(--text-secondary);
+      letter-spacing: 0.5px;
+      display: flex;
+      gap: 16px;
+    }
+    .summary-content {
+      flex: 1;
+      overflow-y: auto;
+      -webkit-overflow-scrolling: touch;
+    }
+    .summary-content::-webkit-scrollbar { display: none; }
+    .summary-section {
+      margin-bottom: 24px;
+      animation: entrySlideIn 0.5s ease-out both;
+    }
+    .summary-section h3 {
+      font-family: var(--font-display);
+      font-weight: 700;
+      font-size: 13px;
+      letter-spacing: 1px;
+      text-transform: uppercase;
+      color: var(--text-secondary);
+      margin-bottom: 12px;
+    }
+    .summary-section p {
+      font-size: 14px;
+      line-height: 1.7;
+      color: var(--text-primary);
+      opacity: 0.85;
+    }
+    .action-item {
+      display: flex;
+      gap: 10px;
+      padding: 12px 14px;
+      border-radius: 12px;
+      background: var(--bg-elevated);
+      border: 1px solid var(--border);
+      margin-bottom: 8px;
+      -webkit-backdrop-filter: blur(10px);
+      backdrop-filter: blur(10px);
+    }
+    .action-item .marker {
+      width: 4px;
+      border-radius: 2px;
+      flex-shrink: 0;
+    }
+    .action-item .marker.you { background: var(--accent-warm); }
+    .action-item .marker.other { background: var(--accent-cool); }
+    .action-item .action-text {
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text-primary);
+    }
+    .action-item .action-owner {
+      font-family: var(--font-mono);
+      font-size: 10px;
+      color: var(--text-secondary);
+      margin-top: 4px;
+    }
+
+    .summary-actions {
+      display: flex;
+      gap: 10px;
+      padding-top: 8px;
+    }
+    .summary-action-btn {
+      flex: 1;
+      padding: 14px;
+      border-radius: 14px;
+      border: 1px solid var(--border);
+      background: var(--bg-elevated);
+      -webkit-backdrop-filter: blur(20px);
+      backdrop-filter: blur(20px);
+      color: var(--text-primary);
+      font-family: var(--font-display);
+      font-weight: 600;
+      font-size: 14px;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      text-align: center;
+    }
+    .summary-action-btn:active { transform: scale(0.97); }
+    .summary-action-btn.primary {
+      background: var(--accent-warm);
+      color: var(--bg-void);
+      border-color: transparent;
+    }
+
+    /* ── Utilities ── */
+    .fade-stagger > * {
+      animation: entrySlideIn 0.5s ease-out both;
+    }
+    .fade-stagger > *:nth-child(1) { animation-delay: 0s; }
+    .fade-stagger > *:nth-child(2) { animation-delay: 0.08s; }
+    .fade-stagger > *:nth-child(3) { animation-delay: 0.16s; }
+    .fade-stagger > *:nth-child(4) { animation-delay: 0.24s; }
+    .fade-stagger > *:nth-child(5) { animation-delay: 0.32s; }
+    .fade-stagger > *:nth-child(6) { animation-delay: 0.40s; }
+  </style>
+</head>
+<body>
+  <canvas class="grain" id="grain"></canvas>
+  <div class="atmosphere"><div class="grid"></div></div>
+
+  <div class="app">
+
+    <!-- ═══ LANDING ═══ -->
+    <div class="screen landing active" id="screen-landing">
+      <div class="brand">
+        <h1><span class="ear">ear</span>piece</h1>
+        <div class="tagline">real-time translation</div>
+      </div>
+      <div class="orb-container">
+        <canvas id="orb-landing"></canvas>
+      </div>
+      <div class="mode-buttons fade-stagger">
+        <button class="mode-btn listen" onclick="app.go('listen')">
+          <div class="icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="color:var(--accent-cool)">
+              <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
+              <path d="M19 10v2a7 7 0 0 1-14 0v-2"/>
+              <line x1="12" y1="19" x2="12" y2="23"/>
+            </svg>
+          </div>
+          <div class="label">
+            <span class="title">Listen</span>
+            <span class="desc">Conversations, announcements, daily life</span>
+          </div>
+          <span class="arrow">›</span>
+        </button>
+        <button class="mode-btn meeting" onclick="app.go('meeting')">
+          <div class="icon">
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" style="color:var(--accent-warm)">
+              <path d="M17 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/>
+              <circle cx="9" cy="7" r="4"/>
+              <path d="M23 21v-2a4 4 0 0 0-3-3.87"/>
+              <path d="M16 3.13a4 4 0 0 1 0 7.75"/>
+            </svg>
+          </div>
+          <div class="label">
+            <span class="title">Meeting</span>
+            <span class="desc">Multi-speaker with summary & action items</span>
+          </div>
+          <span class="arrow">›</span>
+        </button>
+      </div>
+    </div>
+
+    <!-- ═══ LISTEN MODE ═══ -->
+    <div class="screen listen-screen" id="screen-listen">
+      <div class="screen-header">
+        <button class="back-btn" onclick="app.go('landing')">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 3L5 8l5 5"/></svg>
+          Back
+        </button>
+        <div class="status-pill cool">
+          <span class="status-dot"></span>
+          Listening
+        </div>
+      </div>
+      <div class="listen-orb-area">
+        <span class="lang-label jp">日本語</span>
+        <canvas id="orb-listen"></canvas>
+        <span class="lang-label en">English</span>
+      </div>
+      <div class="transcript-area" id="listen-transcript"></div>
+      <div class="controls">
+        <button class="stop-btn" onclick="app.go('landing')">
+          <div class="stop-icon"></div>
+        </button>
+      </div>
+    </div>
+
+    <!-- ═══ MEETING MODE ═══ -->
+    <div class="screen listen-screen meeting-screen" id="screen-meeting">
+      <div class="screen-header">
+        <button class="back-btn" onclick="app.go('landing')">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 3L5 8l5 5"/></svg>
+          Back
+        </button>
+        <div class="meeting-timer" id="meeting-timer">00:00</div>
+        <div class="status-pill warm">
+          <span class="status-dot"></span>
+          Meeting
+        </div>
+      </div>
+      <div class="listen-orb-area">
+        <canvas id="orb-meeting"></canvas>
+      </div>
+      <div class="speaker-bar" id="speaker-bar">
+        <div class="speaker-chip s1"><span class="dot"></span>Speaker 1</div>
+        <div class="speaker-chip s2"><span class="dot"></span>Speaker 2</div>
+        <div class="speaker-chip s3"><span class="dot"></span>Speaker 3</div>
+      </div>
+      <div class="transcript-area" id="meeting-transcript"></div>
+      <div class="controls">
+        <button class="stop-btn" onclick="app.go('landing')">
+          <div class="stop-icon"></div>
+        </button>
+        <button class="summary-btn" onclick="app.go('summary')">View Summary</button>
+      </div>
+    </div>
+
+    <!-- ═══ SUMMARY ═══ -->
+    <div class="screen summary-screen" id="screen-summary">
+      <div class="screen-header">
+        <button class="back-btn" onclick="app.go('meeting')">
+          <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M10 3L5 8l5 5"/></svg>
+          Back
+        </button>
+      </div>
+      <div class="summary-title">Meeting Summary</div>
+      <div class="summary-meta">
+        <span>14 min 32 sec</span>
+        <span>3 speakers</span>
+        <span>12 exchanges</span>
+      </div>
+      <div class="summary-content fade-stagger">
+        <div class="summary-section">
+          <h3>Overview</h3>
+          <p>Sprint review for the product launch. Backend API is on track. Frontend has a one-week delay due to new accessibility requirements. Release date stays the same — frontend team will catch up with extra resources.</p>
+        </div>
+        <div class="summary-section">
+          <h3>Action Items</h3>
+          <div class="action-item">
+            <div class="marker you"></div>
+            <div>
+              <div class="action-text">Finalize the API documentation and share with frontend team</div>
+              <div class="action-owner">Assigned to you · Due Friday</div>
+            </div>
+          </div>
+          <div class="action-item">
+            <div class="marker other"></div>
+            <div>
+              <div class="action-text">Reallocate two engineers to the frontend accessibility sprint</div>
+              <div class="action-owner">Tanaka-san · Due tomorrow</div>
+            </div>
+          </div>
+          <div class="action-item">
+            <div class="marker other"></div>
+            <div>
+              <div class="action-text">Schedule QA testing window for the week of the 28th</div>
+              <div class="action-owner">Suzuki-san · Due next Wednesday</div>
+            </div>
+          </div>
+        </div>
+        <div class="summary-section">
+          <h3>Key Decisions</h3>
+          <p>Release date remains April 30th. No scope reduction — the team will absorb the delay with additional resources rather than cutting features.</p>
+        </div>
+      </div>
+      <div class="summary-actions">
+        <button class="summary-action-btn" onclick="app.go('landing')">Done</button>
+        <button class="summary-action-btn primary">Copy Summary</button>
+      </div>
+    </div>
+
+  </div>
+
+  <script>
+    // ── Grain noise ──
+    (function initGrain() {
+      const c = document.getElementById('grain');
+      const ctx = c.getContext('2d');
+      c.width = 256; c.height = 256;
+      const img = ctx.createImageData(256, 256);
+      for (let i = 0; i < img.data.length; i += 4) {
+        const v = Math.random() * 255;
+        img.data[i] = img.data[i+1] = img.data[i+2] = v;
+        img.data[i+3] = 255;
+      }
+      ctx.putImageData(img, 0, 0);
+    })();
+
+    // ── Orb renderer ──
+    class Orb {
+      constructor(canvas, opts = {}) {
+        this.canvas = canvas;
+        this.ctx = canvas.getContext('2d');
+        this.dpr = window.devicePixelRatio || 1;
+        this.baseRadius = opts.radius || 80;
+        this.layers = opts.layers || 3;
+        this.activity = 0;
+        this.targetActivity = 0;
+        this.time = Math.random() * 1000;
+        this.resize();
+      }
+
+      resize() {
+        const rect = this.canvas.getBoundingClientRect();
+        this.canvas.width = rect.width * this.dpr;
+        this.canvas.height = rect.height * this.dpr;
+        this.cx = this.canvas.width / 2;
+        this.cy = this.canvas.height / 2;
+      }
+
+      setActivity(a) { this.targetActivity = a; }
+
+      draw() {
+        this.activity += (this.targetActivity - this.activity) * 0.02;
+        this.time += 0.008;
+        const ctx = this.ctx;
+        ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+        const layerConfigs = [
+          { scale: 1.35, alpha: 0.08, speedMul: 0.6, color1: '#00D0FF', color2: '#F0A030' },
+          { scale: 1.0,  alpha: 0.20, speedMul: 1.0, color1: '#00D0FF', color2: '#F0A030' },
+          { scale: 0.65, alpha: 0.35, speedMul: 1.5, color1: '#30E0D0', color2: '#FFB840' },
+        ];
+
+        for (let l = 0; l < this.layers; l++) {
+          const cfg = layerConfigs[l] || layerConfigs[0];
+          const r = this.baseRadius * this.dpr * cfg.scale;
+          const amp = (0.06 + this.activity * 0.18) * r;
+          const t = this.time * cfg.speedMul;
+          const points = 120;
+
+          ctx.beginPath();
+          for (let i = 0; i <= points; i++) {
+            const angle = (i / points) * Math.PI * 2;
+            const noise =
+              Math.sin(angle * 3 + t * 1.1) * 0.30 +
+              Math.sin(angle * 5 - t * 0.7) * 0.25 +
+              Math.sin(angle * 7 + t * 1.6) * 0.15 +
+              Math.cos(angle * 2 - t * 0.9) * 0.30;
+            const dr = r + noise * amp;
+            const x = this.cx + Math.cos(angle) * dr;
+            const y = this.cy + Math.sin(angle) * dr;
+            if (i === 0) ctx.moveTo(x, y);
+            else ctx.lineTo(x, y);
+          }
+          ctx.closePath();
+
+          const grad = ctx.createRadialGradient(
+            this.cx, this.cy, 0,
+            this.cx, this.cy, r * 1.2
+          );
+          const mix = 0.5 + Math.sin(this.time * 0.3) * 0.5;
+          grad.addColorStop(0, cfg.color2 + '80');
+          grad.addColorStop(0.5, cfg.color1 + '40');
+          grad.addColorStop(1, 'transparent');
+
+          ctx.globalAlpha = cfg.alpha;
+          ctx.fillStyle = grad;
+          ctx.fill();
+
+          // Glow
+          ctx.shadowColor = mix > 0.5 ? cfg.color1 : cfg.color2;
+          ctx.shadowBlur = 40 * this.dpr * (0.3 + this.activity * 0.7);
+          ctx.fill();
+          ctx.shadowBlur = 0;
+        }
+        ctx.globalAlpha = 1;
+      }
+    }
+
+    // ── App controller ──
+    const app = {
+      currentScreen: 'landing',
+      orbs: {},
+      transcriptTimers: [],
+      meetingSeconds: 0,
+      meetingInterval: null,
+
+      init() {
+        this.orbs.landing = new Orb(document.getElementById('orb-landing'), { radius: 85, layers: 3 });
+        this.orbs.listen = new Orb(document.getElementById('orb-listen'), { radius: 72, layers: 3 });
+        this.orbs.meeting = new Orb(document.getElementById('orb-meeting'), { radius: 48, layers: 3 });
+        this.animate();
+      },
+
+      animate() {
+        Object.values(this.orbs).forEach(o => o.draw());
+        requestAnimationFrame(() => this.animate());
+      },
+
+      go(screen) {
+        this.clearTimers();
+        document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
+        document.getElementById('screen-' + screen).classList.add('active');
+        this.currentScreen = screen;
+
+        // Set orb activity
+        Object.values(this.orbs).forEach(o => o.setActivity(0));
+
+        if (screen === 'listen') {
+          this.orbs.listen.setActivity(0.6);
+          this.simulateListenTranscript();
+        }
+        if (screen === 'meeting') {
+          this.orbs.meeting.setActivity(0.5);
+          this.startMeetingTimer();
+          this.simulateMeetingTranscript();
+        }
+        if (screen === 'landing') {
+          this.orbs.landing.setActivity(0);
+          this.meetingSeconds = 0;
+          if (this.meetingInterval) clearInterval(this.meetingInterval);
+        }
+      },
+
+      clearTimers() {
+        this.transcriptTimers.forEach(t => clearTimeout(t));
+        this.transcriptTimers = [];
+        document.getElementById('listen-transcript').innerHTML = '';
+        document.getElementById('meeting-transcript').innerHTML = '';
+        document.querySelectorAll('.speaker-chip').forEach(c => c.classList.remove('active'));
+      },
+
+      addTranscript(containerId, entry) {
+        const area = document.getElementById(containerId);
+        const div = document.createElement('div');
+        div.className = 'transcript-entry';
+        let html = '';
+        if (entry.speaker) {
+          html += `<div class="speaker-tag ${entry.speakerClass || ''}">${entry.speaker}</div>`;
+        }
+        html += `<div class="source">${entry.jp}</div>`;
+        html += `<div class="translation">${entry.en}</div>`;
+        div.innerHTML = html;
+        area.appendChild(div);
+        area.scrollTop = area.scrollHeight;
+
+        // Pulse orb
+        const orbKey = containerId === 'listen-transcript' ? 'listen' : 'meeting';
+        this.orbs[orbKey].setActivity(0.9);
+        setTimeout(() => this.orbs[orbKey].setActivity(0.4), 800);
+      },
+
+      simulateListenTranscript() {
+        const lines = [
+          { jp: 'いらっしゃいませ', en: 'Welcome', delay: 1200 },
+          { jp: 'ポイントカードはお持ちですか？', en: 'Do you have a points card?', delay: 3500 },
+          { jp: '袋はご利用になりますか？', en: 'Would you like a bag?', delay: 6000 },
+          { jp: 'お会計は320円になります', en: 'Your total is 320 yen', delay: 8500 },
+          { jp: 'お支払いは現金ですか、カードですか？', en: 'Will you be paying with cash or card?', delay: 11000 },
+          { jp: 'ありがとうございました。またお越しくださいませ', en: 'Thank you very much. Please come again', delay: 14000 },
+        ];
+        lines.forEach(l => {
+          const t = setTimeout(() => {
+            if (this.currentScreen === 'listen') this.addTranscript('listen-transcript', l);
+          }, l.delay);
+          this.transcriptTimers.push(t);
+        });
+      },
+
+      simulateMeetingTranscript() {
+        const lines = [
+          { speaker: 'Speaker 1', speakerClass: 's1', jp: 'では、今月のプロジェクト進捗について確認しましょう', en: "Let's review this month's project progress", delay: 2000, active: 0 },
+          { speaker: 'Speaker 2', speakerClass: 's2', jp: 'バックエンドのAPI開発は予定通り進んでいます', en: 'Backend API development is on schedule', delay: 5500, active: 1 },
+          { speaker: 'Speaker 1', speakerClass: 's1', jp: 'フロントエンドの方はどうですか？', en: 'How about the frontend?', delay: 8500, active: 0 },
+          { speaker: 'Speaker 3', speakerClass: 's3', jp: '少し遅れています。アクセシビリティ要件が増えました', en: "We're a bit behind. Accessibility requirements increased", delay: 11500, active: 2 },
+          { speaker: 'Speaker 1', speakerClass: 's1', jp: 'リリース日は変更なしで進めましょう。リソースを追加します', en: "Let's keep the release date. We'll add resources", delay: 15000, active: 0 },
+          { speaker: 'Speaker 2', speakerClass: 's2', jp: 'API仕様書の最終版を金曜日までに共有してもらえますか？', en: 'Can you share the final API docs by Friday?', delay: 18500, active: 1 },
+        ];
+        const chips = document.querySelectorAll('.speaker-chip');
+        lines.forEach(l => {
+          const t = setTimeout(() => {
+            if (this.currentScreen === 'meeting') {
+              this.addTranscript('meeting-transcript', l);
+              chips.forEach(c => c.classList.remove('active'));
+              chips[l.active]?.classList.add('active');
+            }
+          }, l.delay);
+          this.transcriptTimers.push(t);
+        });
+      },
+
+      startMeetingTimer() {
+        this.meetingSeconds = 872; // simulate 14:32 into a meeting
+        const el = document.getElementById('meeting-timer');
+        const fmt = (s) => {
+          const m = Math.floor(s / 60);
+          const sec = s % 60;
+          return `${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+        };
+        el.textContent = fmt(this.meetingSeconds);
+        this.meetingInterval = setInterval(() => {
+          this.meetingSeconds++;
+          el.textContent = fmt(this.meetingSeconds);
+        }, 1000);
+      }
+    };
+
+    window.addEventListener('DOMContentLoaded', () => app.init());
+    window.addEventListener('resize', () => {
+      Object.values(app.orbs).forEach(o => o.resize());
+    });
+  </script>
+</body>
+</html>

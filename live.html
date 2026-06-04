@@ -1,0 +1,952 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no, viewport-fit=cover" />
+<title>Subtitle / Japan</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Bebas+Neue&family=JetBrains+Mono:wght@400;500;600&family=Outfit:wght@400;500;600;700&family=Noto+Sans+JP:wght@400;500;600&display=swap">
+
+<style>
+/* ═════════════════════════════════════════════════════════════════════
+   EARPIECE / LIVE
+   broadcast subtitle station, est. 2026
+
+   Design vocabulary:
+     • Pure-black void background. The subtitle text is the only soft
+       light in the room (broadcast monitor / projection booth).
+     • Mono chrome (JetBrains Mono) for everything mechanical: timer,
+       channel labels, line counter. Tabular numerals everywhere
+       there's a number that updates.
+     • Condensed display type (Bebas Neue) for the brand mark — the
+       narrow vertical of transit boards and broadcast bugs.
+     • Subtitle body: Outfit (English, characterful geometric) +
+       Noto Sans JP (Japanese, the standard pairing).
+     • Hairline rule everywhere. No box shadows on chrome — only
+       on the active subtitle line (broadcast "lit pixel" feel).
+     • Grain overlay at 2% — keeps the void from looking flat-screen
+       sterile. Subtle but you feel it.
+   ═════════════════════════════════════════════════════════════════════ */
+
+:root {
+  color-scheme: dark;
+
+  /* Palette */
+  --bg: #000;
+  --ink-yellow: #FFE45C;      /* left subtitle — Tokyo Tower amber */
+  --ink-yellow-dim: #C9B249;
+  --ink-white: #F5F5F4;        /* right subtitle — warm bone */
+  --ink-white-dim: #888884;
+  --ink-red: #FF3B30;          /* recording */
+  --ink-gray: #6B6B68;
+  --ink-faint: #2A2A28;
+  --rule: rgba(255,255,255,0.06);
+  --rule-strong: rgba(255,255,255,0.12);
+
+  /* Type scale — fixed sizes for broadcast precision */
+  --sz-brand: 22px;
+  --sz-channel: 10px;
+  --sz-meta: 11px;
+  --sz-timer: 13px;
+  --sz-current: 20px;          /* current subtitle line — per Marsel */
+  --sz-history: 15px;          /* finalized history entries */
+  --sz-source-current: 12px;
+  --sz-source-history: 11px;
+
+  /* Spatial */
+  --hdr-h: 56px;
+  --ftr-h: 78px;
+}
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; }
+body {
+  background: var(--bg); color: var(--ink-white);
+  font-family: "Outfit", -apple-system, BlinkMacSystemFont, sans-serif;
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  -webkit-user-select: none; user-select: none;
+  -webkit-tap-highlight-color: transparent;
+  display: grid;
+  grid-template-rows: var(--hdr-h) 1fr var(--ftr-h);
+  position: relative;
+}
+
+/* Grain overlay — SVG noise filter, fixed across viewport, mix-blend
+   to keep underlying pixels but add organic dither. 2% opacity is
+   "you feel it but don't see it". */
+body::before {
+  content: "";
+  position: fixed; inset: 0;
+  z-index: 2; pointer-events: none;
+  opacity: 0.025;
+  background-image: url("data:image/svg+xml,%3Csvg viewBox='0 0 256 256' xmlns='http://www.w3.org/2000/svg'%3E%3Cfilter id='n'%3E%3CfeTurbulence baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+/* Top edge "tally lamp" — thin red bar that lights when recording,
+   broadcast convention from camera tally lights. Lives above header. */
+body::after {
+  content: "";
+  position: fixed; top: 0; left: 0; right: 0; height: 2px;
+  background: transparent; z-index: 3; pointer-events: none;
+  transition: background 0.3s, box-shadow 0.3s;
+}
+body.live::after {
+  background: var(--ink-red);
+  box-shadow: 0 0 12px rgba(255,59,48,0.6), 0 0 28px rgba(255,59,48,0.3);
+}
+
+/* ─── HEADER ─────────────────────────────────────────────────────────
+   Broadcast monitor frame top bar. Three regions:
+     LEFT  — brand mark + station tag
+     CENT  — REC indicator + transport timer (mono, tabular)
+     RIGHT — line counter + session id glyph
+   Hairline rule on bottom only. */
+header {
+  height: var(--hdr-h);
+  border-bottom: 1px solid var(--rule);
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 0 20px;
+  font-family: "JetBrains Mono", ui-monospace, monospace;
+  font-size: var(--sz-meta);
+  color: var(--ink-gray);
+  letter-spacing: 0.04em;
+  background: linear-gradient(to bottom, #0a0a0a 0%, #000 100%);
+}
+.brand {
+  display: flex; align-items: baseline; gap: 12px;
+  font-family: "Bebas Neue", "Outfit", sans-serif;
+  font-size: var(--sz-brand);
+  color: var(--ink-white);
+  letter-spacing: 0.14em;
+  line-height: 1;
+}
+.brand .mark {
+  width: 14px; height: 14px;
+  border: 1.5px solid var(--ink-yellow);
+  display: inline-block; transform: translateY(2px);
+  position: relative;
+}
+.brand .mark::after {
+  content: ""; position: absolute; inset: 2px;
+  background: var(--ink-yellow);
+  opacity: 0.35;
+}
+.brand .station {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px; color: var(--ink-gray);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  align-self: center; margin-left: 4px;
+}
+
+.transport {
+  display: flex; align-items: center; gap: 14px;
+  padding: 6px 14px;
+  border: 1px solid var(--rule-strong);
+  border-radius: 2px;
+  background: rgba(255,255,255,0.02);
+  font-family: "JetBrains Mono", monospace;
+}
+.rec-dot {
+  width: 8px; height: 8px; border-radius: 50%;
+  background: var(--ink-faint);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
+  transition: background 0.2s, box-shadow 0.2s;
+}
+body.live .rec-dot {
+  background: var(--ink-red);
+  box-shadow:
+    inset 0 0 0 1px rgba(255,255,255,0.15),
+    0 0 6px rgba(255,59,48,0.7),
+    0 0 14px rgba(255,59,48,0.35);
+  animation: dot-pulse 1.4s infinite ease-in-out;
+}
+@keyframes dot-pulse {
+  0%,60%,100% { opacity: 1; }
+  30% { opacity: 0.35; }
+}
+.rec-label {
+  font-size: 10px; letter-spacing: 0.22em;
+  color: var(--ink-gray);
+  text-transform: uppercase;
+  min-width: 28px;
+}
+body.live .rec-label { color: var(--ink-red); }
+.timer {
+  font-size: var(--sz-timer);
+  font-variant-numeric: tabular-nums;
+  color: var(--ink-white);
+  font-weight: 500;
+  letter-spacing: 0.05em;
+}
+
+.meta {
+  justify-self: end;
+  display: flex; align-items: center; gap: 18px;
+  font-family: "JetBrains Mono", monospace;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  font-size: 10px;
+}
+.meta .count { color: var(--ink-gray); font-variant-numeric: tabular-nums; }
+.meta .count strong {
+  color: var(--ink-white); font-weight: 600; margin-right: 5px;
+}
+.meta .sid {
+  color: var(--ink-faint);
+  border: 1px solid var(--ink-faint);
+  padding: 3px 6px;
+  border-radius: 2px;
+}
+
+/* ─── MAIN — TWO CHANNELS ────────────────────────────────────────────
+   Channel A (left) and Channel B (right), divided by a hairline
+   plus a column tag with the channel letter. */
+main {
+  display: grid;
+  grid-template-columns: 1fr 1px 1fr;
+  min-height: 0;
+  position: relative;
+}
+.col-divider {
+  background: linear-gradient(
+    to bottom,
+    transparent 0%,
+    var(--rule-strong) 8%,
+    var(--rule-strong) 92%,
+    transparent 100%
+  );
+}
+
+.col {
+  display: grid;
+  grid-template-rows: auto 1fr auto;
+  min-height: 0; min-width: 0;
+  padding: 18px 24px 24px 24px;
+}
+.col-head {
+  display: flex; align-items: baseline; justify-content: space-between;
+  margin-bottom: 16px;
+  font-family: "JetBrains Mono", monospace;
+}
+.col-head .channel {
+  font-size: var(--sz-channel);
+  letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-gray);
+}
+.col-head .channel .ch-letter {
+  color: var(--ink-white);
+  margin-right: 6px;
+  font-weight: 600;
+}
+.col-head .lang {
+  font-family: "Bebas Neue", monospace;
+  font-size: 16px;
+  letter-spacing: 0.18em;
+  color: var(--ink-faint);
+}
+#col-left  .col-head .lang { color: var(--ink-yellow-dim); }
+#col-right .col-head .lang { color: var(--ink-white-dim); }
+
+/* History — scrollable, most-recent at bottom near current line */
+.history {
+  overflow-y: auto;
+  display: flex; flex-direction: column; justify-content: flex-end;
+  scrollbar-width: thin;
+  scrollbar-color: var(--rule-strong) transparent;
+  padding-right: 6px;
+  mask-image: linear-gradient(to bottom, transparent 0%, #000 64px, #000 100%);
+}
+.history::-webkit-scrollbar { width: 3px; }
+.history::-webkit-scrollbar-track { background: transparent; }
+.history::-webkit-scrollbar-thumb { background: var(--rule-strong); border-radius: 1px; }
+.history::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.18); }
+
+.entry {
+  padding: 10px 0 11px 0;
+  border-bottom: 1px solid var(--rule);
+  animation: entry-in 0.4s ease-out;
+}
+@keyframes entry-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 0.65; transform: translateY(0); }
+}
+.entry .ts {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px;
+  letter-spacing: 0.18em;
+  color: var(--ink-faint);
+  margin-bottom: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.entry .body {
+  font-size: var(--sz-history);
+  line-height: 1.4;
+  font-weight: 500;
+  opacity: 0.7;
+}
+#col-left  .entry .body {
+  font-family: "Outfit", sans-serif;
+  color: var(--ink-yellow);
+}
+#col-right .entry .body {
+  font-family: "Noto Sans JP", sans-serif;
+  color: var(--ink-white);
+}
+
+/* CURRENT — the active line. Sits at the bottom of the column,
+   visually anchored by a thin "live" rule above it. Has a soft
+   glow that suggests a CRT/projector lit pixel. */
+.current {
+  margin-top: 14px;
+  padding-top: 14px;
+  position: relative;
+  min-height: 64px;
+  display: flex; flex-direction: column;
+  justify-content: flex-end;
+}
+.current::before {
+  content: "";
+  position: absolute; top: 0; left: 0; right: 0; height: 1px;
+  background: linear-gradient(to right,
+    transparent 0%, var(--rule-strong) 10%, var(--rule-strong) 90%, transparent 100%
+  );
+}
+.current::after {
+  /* tiny "NOW" tick mark above the current line */
+  content: "▸ NOW";
+  position: absolute; top: -7px; left: 0;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 8px;
+  letter-spacing: 0.22em;
+  color: var(--ink-gray);
+  background: var(--bg);
+  padding: 0 6px 0 0;
+}
+.current .text {
+  font-size: var(--sz-current);
+  line-height: 1.45;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+  min-height: 1.5em;
+}
+#col-left .current .text {
+  font-family: "Outfit", sans-serif;
+  color: var(--ink-yellow);
+  text-shadow:
+    0 0 1px rgba(255,228,92,0.4),
+    0 0 12px rgba(255,228,92,0.18);
+}
+#col-right .current .text {
+  font-family: "Noto Sans JP", sans-serif;
+  color: var(--ink-white);
+  text-shadow:
+    0 0 1px rgba(245,245,244,0.5),
+    0 0 12px rgba(245,245,244,0.12);
+}
+
+/* Caret pulse on the active line while text is mid-update */
+.current.streaming .text::after {
+  content: "▌";
+  display: inline-block;
+  margin-left: 2px;
+  opacity: 0.7;
+  animation: caret 1s infinite;
+}
+@keyframes caret { 0%,55% { opacity: 0.7; } 60%,100% { opacity: 0; } }
+
+/* Idle / standby state */
+.idle-card {
+  position: absolute; top: 50%; left: 50%;
+  transform: translate(-50%, -50%);
+  text-align: center;
+  font-family: "JetBrains Mono", monospace;
+  color: var(--ink-gray);
+  pointer-events: none;
+  width: min(420px, 80vw);
+}
+.idle-card .standby {
+  font-family: "Bebas Neue", sans-serif;
+  font-size: 64px;
+  line-height: 0.95;
+  letter-spacing: 0.18em;
+  color: var(--ink-faint);
+  margin-bottom: 22px;
+  text-indent: 0.18em;
+}
+.idle-card .hint {
+  font-size: 11px;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  line-height: 1.9;
+  color: var(--ink-gray);
+}
+.idle-card .hint .ch {
+  color: var(--ink-white);
+}
+body.live .idle-card,
+body.has-content .idle-card { display: none; }
+body:not(.live):not(.has-content) .history,
+body:not(.live):not(.has-content) .current { visibility: hidden; }
+
+/* ─── FOOTER ─────────────────────────────────────────────────────────
+   Single floating MIC button as the primary action; DOWNLOAD sits
+   right-aligned as a secondary chip that only appears post-session. */
+footer {
+  height: var(--ftr-h);
+  border-top: 1px solid var(--rule);
+  display: grid;
+  grid-template-columns: 1fr auto 1fr;
+  align-items: center;
+  padding: 0 24px calc(env(safe-area-inset-bottom, 0px));
+  background: linear-gradient(to top, #050505, #000);
+  position: relative;
+}
+.foot-meta {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px; letter-spacing: 0.22em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+.foot-meta.right { justify-self: end; display: flex; gap: 14px; align-items: center; }
+
+button {
+  font-family: inherit; cursor: pointer; border: none;
+  transition: transform 0.12s, background 0.18s, border-color 0.18s, color 0.18s;
+}
+.mic {
+  width: 54px; height: 54px; border-radius: 50%;
+  background: var(--ink-white);
+  color: #000;
+  font-size: 0;
+  position: relative;
+  display: grid; place-items: center;
+  box-shadow:
+    0 0 0 1px rgba(255,255,255,0.06),
+    0 2px 16px rgba(255,228,92,0.08);
+}
+/* Inner SVG-free mic glyph: a small disc */
+.mic::before {
+  content: ""; width: 14px; height: 14px; border-radius: 50%;
+  background: #000; display: block;
+}
+.mic:hover { transform: translateY(-1px); }
+.mic:active { transform: scale(0.94); }
+.mic[disabled] { opacity: 0.45; cursor: wait; }
+.mic.recording {
+  background: var(--ink-red);
+  box-shadow:
+    0 0 0 1px rgba(255,59,48,0.4),
+    0 0 22px rgba(255,59,48,0.5),
+    0 0 48px rgba(255,59,48,0.22);
+  animation: mic-pulse 1.6s ease-in-out infinite;
+}
+.mic.recording::before {
+  /* When recording, swap inner dot for a square (stop) */
+  background: #fff;
+  width: 14px; height: 14px;
+  border-radius: 2px;
+}
+@keyframes mic-pulse {
+  0%,100% { box-shadow:
+    0 0 0 1px rgba(255,59,48,0.4),
+    0 0 22px rgba(255,59,48,0.5),
+    0 0 48px rgba(255,59,48,0.22); }
+  50% { box-shadow:
+    0 0 0 1px rgba(255,59,48,0.5),
+    0 0 32px rgba(255,59,48,0.7),
+    0 0 72px rgba(255,59,48,0.35); }
+}
+
+.dl {
+  background: transparent; color: var(--ink-white);
+  border: 1px solid var(--rule-strong);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px; letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 8px 14px;
+  border-radius: 2px;
+}
+.dl:hover { border-color: var(--ink-yellow); color: var(--ink-yellow); }
+.dl[hidden] { display: none; }
+
+/* ─── MOBILE ─────────────────────────────────────────────────────────
+   Stack columns vertically on narrow screens. Header collapses to
+   essentials; the brand drops the station tag. */
+@media (max-width: 720px) {
+  :root {
+    --hdr-h: 50px;
+    --ftr-h: 70px;
+    --sz-brand: 18px;
+    --sz-current: 19px;
+    --sz-history: 14px;
+  }
+  main { grid-template-columns: 1fr; grid-template-rows: 1fr 1px 1fr; }
+  .col-divider {
+    background: linear-gradient(to right,
+      transparent 0%, var(--rule-strong) 8%, var(--rule-strong) 92%, transparent 100%
+    );
+  }
+  .col { padding: 14px 18px 18px 18px; }
+  header { padding: 0 14px; }
+  .brand .station { display: none; }
+  .meta .sid { display: none; }
+  .idle-card .standby { font-size: 30px; }
+}
+
+/* ─── DEBUG LOG ──────────────────────────────────────────────────────
+   Tiny corner log line, useful when something errors. Stays unobtrusive. */
+.diag {
+  position: fixed; top: 8px; right: 14px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 9px; color: var(--ink-faint);
+  pointer-events: none;
+  letter-spacing: 0.05em;
+  max-width: 50vw;
+  text-align: right;
+  z-index: 4;
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="brand">
+    <span class="mark"></span>
+    <span>SUBTITLE</span>
+    <span class="station">/ JAPAN</span>
+  </div>
+  <div class="transport">
+    <span class="rec-dot" id="rec-dot"></span>
+    <span class="rec-label" id="rec-label">OFF</span>
+    <span class="timer" id="elapsed">00:00:00</span>
+  </div>
+  <div class="meta">
+    <span class="count" id="count"><strong>0</strong>LINES</span>
+    <span class="sid" id="sid">SUB · JP</span>
+  </div>
+</header>
+
+<main>
+  <section class="col" id="col-left">
+    <div class="col-head">
+      <span class="channel"><span class="ch-letter">A</span>CHANNEL · ENGLISH</span>
+      <span class="lang">EN</span>
+    </div>
+    <div class="history" id="hist-left"></div>
+    <div class="current" id="cur-left">
+      <div class="text"></div>
+    </div>
+  </section>
+
+  <div class="col-divider"></div>
+
+  <section class="col" id="col-right">
+    <div class="col-head">
+      <span class="channel"><span class="ch-letter">B</span>CHANNEL · 日本語</span>
+      <span class="lang">JP</span>
+    </div>
+    <div class="history" id="hist-right"></div>
+    <div class="current" id="cur-right">
+      <div class="text"></div>
+    </div>
+  </section>
+
+  <div class="idle-card">
+    <div class="standby">SUBTITLE<br>OFF</div>
+    <div class="hint">
+      PRESS THE MIC TO TURN ON<br>
+      SPEAK FREELY · EITHER LANGUAGE<br>
+      <span class="ch">CH A</span> RENDERS ENGLISH ·
+      <span class="ch">CH B</span> RENDERS 日本語
+    </div>
+  </div>
+</main>
+
+<footer>
+  <span class="foot-meta">SUBTITLE / JP · v0.1 · 24KHZ PCM16</span>
+  <button id="mic" class="mic" type="button" aria-label="Start recording"></button>
+  <span class="foot-meta right">
+    <button id="dl" class="dl" type="button" hidden>EXPORT · MD</button>
+  </span>
+</footer>
+
+<div class="diag" id="diag"></div>
+
+<script type="module">
+// ═══════════════════════════════════════════════════════════════════════
+//  earpiece live · client
+//  Bidirectional, language-routed: each panel always shows one language
+//  regardless of who's speaking. Sentence-aware splitting.
+// ═══════════════════════════════════════════════════════════════════════
+
+const $ = (id) => document.getElementById(id);
+
+const ui = {
+  recDot: $('rec-dot'),
+  recLabel: $('rec-label'),
+  elapsed: $('elapsed'),
+  count: $('count'),
+  mic: $('mic'),
+  dl: $('dl'),
+  diag: $('diag'),
+};
+const panels = {
+  left:  { hist: $('hist-left'),  cur: $('cur-left'),  text: $('cur-left').querySelector('.text')  },
+  right: { hist: $('hist-right'), cur: $('cur-right'), text: $('cur-right').querySelector('.text') },
+};
+
+let ctx = null, stream = null, workletNode = null, ws = null;
+let active = false, sessionStart = 0, elapsedTimer = null;
+
+// Per-panel accumulating state. We keep a buffer of streamed text and
+// repeatedly try to peel off completed sentences from the front.
+const cur = {
+  left:  { buf: '', ts: null, lastDeltaAt: 0, session: null },
+  right: { buf: '', ts: null, lastDeltaAt: 0, session: null },
+};
+// History across panels — used for export. Each entry: {ts, panel, text, session}
+const history = [];
+
+// Silence-timer that finalizes lingering text 2.5s after the last delta,
+// in case the model omitted terminal punctuation (common with spoken JP).
+const SILENCE_FINALIZE_MS = 2500;
+let silenceTicker = null;
+
+// ── Log line (corner) ─────────────────────────────────────────────────
+function diag(msg) { ui.diag.textContent = msg; console.log('[live]', msg); }
+
+// ── Time formatters ───────────────────────────────────────────────────
+function fmtElapsed(ms) {
+  const s = Math.floor(ms / 1000);
+  const h = Math.floor(s / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const sec = s % 60;
+  return `${String(h).padStart(2,'0')}:${String(m).padStart(2,'0')}:${String(sec).padStart(2,'0')}`;
+}
+function fmtClockTime(d) {
+  return `${String(d.getHours()).padStart(2,'0')}:${String(d.getMinutes()).padStart(2,'0')}:${String(d.getSeconds()).padStart(2,'0')}`;
+}
+
+function setRecording(on) {
+  document.body.classList.toggle('live', on);
+  ui.recLabel.textContent = on ? 'ON' : 'OFF';
+}
+
+// ── Sentence-boundary detection ───────────────────────────────────────
+// JP terminal punctuation is unambiguous: 。 ！ ？ …
+// EN is trickier (abbreviations) — we require a SPACE after the
+// terminator or end-of-string; that filters "Dr. Smith" and "U.S.A."
+const RE_SENTENCE_JP = /([^。！？…]+[。！？…]+)/;
+const RE_SENTENCE_EN = /([^.!?]+[.!?]+)(?=\s|$)/;
+
+// Peel one finalized sentence off the front of a panel's buffer.
+// Returns true if it finalized something (caller should loop).
+function trySplitSentence(panel) {
+  const buf = cur[panel].buf;
+  if (!buf) return false;
+
+  const re = panel === 'left' ? RE_SENTENCE_EN : RE_SENTENCE_JP;
+  const m = buf.match(re);
+  if (!m) return false;
+
+  // Take the matched sentence verbatim. For EN we used a lookahead so
+  // the match doesn't include the trailing space; for JP we include
+  // the punctuation itself.
+  const sentence = m[1].trim();
+  const consumed = m.index + m[1].length;
+  // For EN: skip the single whitespace after the punctuation
+  let rest = buf.slice(consumed);
+  if (panel === 'left') rest = rest.replace(/^\s+/, '');
+
+  if (!sentence) return false;
+
+  finalizeEntry(panel, sentence);
+  cur[panel].buf = rest;
+  cur[panel].ts = rest ? cur[panel].ts : null;
+  renderCurrent(panel);
+  return true;
+}
+
+function finalizeEntry(panel, text) {
+  if (!text) return;
+  const ts = cur[panel].ts || new Date().toISOString();
+  history.push({ ts, panel, text, session: cur[panel].session });
+
+  const el = document.createElement('div');
+  el.className = 'entry';
+  const tsEl = document.createElement('div');
+  tsEl.className = 'ts';
+  tsEl.textContent = fmtClockTime(new Date(ts));
+  const bodyEl = document.createElement('div');
+  bodyEl.className = 'body';
+  bodyEl.textContent = text;
+  el.append(tsEl, bodyEl);
+  panels[panel].hist.appendChild(el);
+  panels[panel].hist.scrollTop = panels[panel].hist.scrollHeight;
+
+  document.body.classList.add('has-content');
+  ui.count.innerHTML = `<strong>${history.length}</strong>${history.length === 1 ? 'LINE' : 'LINES'}`;
+}
+
+function renderCurrent(panel) {
+  const p = panels[panel];
+  const txt = cur[panel].buf;
+  p.text.textContent = txt;
+  p.cur.classList.toggle('streaming', !!txt);
+}
+
+// Greedy splitter — peels off as many full sentences as it can.
+function flushSentences(panel) {
+  let n = 0;
+  while (n < 8 && trySplitSentence(panel)) n++;
+}
+
+// Silence-timer: if a panel has unfinalized text and no new deltas
+// for SILENCE_FINALIZE_MS, commit whatever's there as a finished line.
+function startSilenceTicker() {
+  stopSilenceTicker();
+  silenceTicker = setInterval(() => {
+    const now = performance.now();
+    for (const p of ['left','right']) {
+      const c = cur[p];
+      if (c.buf && c.lastDeltaAt && (now - c.lastDeltaAt) > SILENCE_FINALIZE_MS) {
+        finalizeEntry(p, c.buf.trim());
+        c.buf = ''; c.ts = null; c.lastDeltaAt = 0;
+        renderCurrent(p);
+      }
+    }
+  }, 700);
+}
+function stopSilenceTicker() {
+  if (silenceTicker) { clearInterval(silenceTicker); silenceTicker = null; }
+}
+
+// ── WebSocket event handling ──────────────────────────────────────────
+function onWsMessage(ev) {
+  let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+  const t = msg.type;
+
+  if (t === 'ready')  { diag('upstream ready'); return; }
+  if (t === 'error')  { diag(`error: ${msg.message || ''}`); return; }
+
+  // Per-panel events
+  const panel = msg.panel;
+  if (!panel || !cur[panel]) return;
+
+  if (t === 'delta' || t === 'input_delta') {
+    if (!cur[panel].ts) cur[panel].ts = new Date().toISOString();
+    cur[panel].session = msg.session || cur[panel].session;
+    cur[panel].buf += msg.text || '';
+    cur[panel].lastDeltaAt = performance.now();
+    renderCurrent(panel);
+    flushSentences(panel);
+    return;
+  }
+  if (t === 'input_done') {
+    // If the server attached a complete transcript, prefer it (catches
+    // any deltas we missed during ws reconnects).
+    if (msg.text) cur[panel].buf = msg.text;
+    renderCurrent(panel);
+    flushSentences(panel);
+    return;
+  }
+  if (t === 'done') {
+    // Output turn ended — flush whatever's left.
+    flushSentences(panel);
+    if (cur[panel].buf.trim()) {
+      finalizeEntry(panel, cur[panel].buf.trim());
+      cur[panel].buf = ''; cur[panel].ts = null; cur[panel].lastDeltaAt = 0;
+      renderCurrent(panel);
+    }
+    return;
+  }
+}
+
+// ── Audio plumbing ────────────────────────────────────────────────────
+function bufToB64(buf) {
+  const bytes = new Uint8Array(buf);
+  let bin = ''; const CHUNK = 0x8000;
+  for (let i = 0; i < bytes.length; i += CHUNK) {
+    bin += String.fromCharCode.apply(null, bytes.subarray(i, i + CHUNK));
+  }
+  return btoa(bin);
+}
+
+async function start() {
+  if (active) return;
+  ui.mic.disabled = true;
+  diag('connecting…');
+
+  // Fresh session
+  ui.dl.hidden = true;
+  history.length = 0;
+  ui.count.innerHTML = `<strong>0</strong>LINES`;
+  for (const k of ['left','right']) {
+    cur[k] = { buf: '', ts: null, lastDeltaAt: 0, session: null };
+    panels[k].hist.innerHTML = '';
+    renderCurrent(k);
+  }
+  document.body.classList.remove('has-content');
+
+  // WebSocket → server proxy
+  const wsUrl = location.origin.replace(/^http/, 'ws') + '/realtime';
+  ws = new WebSocket(wsUrl);
+  let wsReady = false;
+  try {
+    await new Promise((resolve, reject) => {
+      const timeout = setTimeout(() => reject(new Error('server timeout')), 10000);
+      ws.onopen = () => diag('ws open');
+      ws.onmessage = (ev) => {
+        let m; try { m = JSON.parse(ev.data); } catch { return; }
+        if (!wsReady && m.type === 'ready') {
+          clearTimeout(timeout); wsReady = true;
+          ws.onmessage = onWsMessage;
+          resolve();
+          return;
+        }
+        if (m.type === 'error') { clearTimeout(timeout); reject(new Error(m.message || 'upstream error')); }
+      };
+      ws.onerror = () => reject(new Error('websocket error'));
+      ws.onclose = (ev) => {
+        if (!wsReady) reject(new Error(`closed before ready (${ev.code})`));
+        else if (active) { diag(`disconnected ${ev.code}`); stop(); }
+      };
+    });
+  } catch (err) {
+    diag(`connect failed: ${err.message}`);
+    try { ws.close(); } catch {}
+    ws = null; ui.mic.disabled = false; return;
+  }
+
+  // Mic
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation: false, noiseSuppression: false, autoGainControl: false }
+    });
+    diag(`mic: ${stream.getAudioTracks()[0]?.label || '(unknown)'}`);
+  } catch (err) {
+    diag(`mic blocked: ${err.message}`);
+    try { ws.close(); } catch {}
+    ws = null; ui.mic.disabled = false; return;
+  }
+
+  // Audio worklet
+  ctx = new (window.AudioContext || window.webkitAudioContext)();
+  if (ctx.state === 'suspended') await ctx.resume();
+  const src = ctx.createMediaStreamSource(stream);
+  await ctx.audioWorklet.addModule('/js/pcm-worklet.js');
+  workletNode = new AudioWorkletNode(ctx, 'pcm-processor');
+  workletNode.port.onmessage = (ev) => {
+    if (!ws || ws.readyState !== WebSocket.OPEN) return;
+    const buf = ev.data.pcm16;
+    if (!buf) return;
+    try { ws.send(JSON.stringify({ type: 'audio', data: bufToB64(buf) })); }
+    catch (e) {}
+  };
+  src.connect(workletNode);
+
+  // UI state → live
+  active = true;
+  sessionStart = Date.now();
+  elapsedTimer = setInterval(() => {
+    ui.elapsed.textContent = fmtElapsed(Date.now() - sessionStart);
+  }, 1000);
+  ui.mic.classList.add('recording');
+  ui.mic.disabled = false;
+  ui.mic.setAttribute('aria-label', 'Stop recording');
+  setRecording(true);
+  startSilenceTicker();
+  diag('live');
+}
+
+function stop() {
+  active = false;
+  if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
+  stopSilenceTicker();
+
+  // Commit any in-flight text before tearing down
+  for (const p of ['left','right']) {
+    if (cur[p].buf.trim()) {
+      finalizeEntry(p, cur[p].buf.trim());
+      cur[p] = { buf: '', ts: null, lastDeltaAt: 0, session: null };
+      renderCurrent(p);
+    }
+  }
+
+  if (workletNode) { try { workletNode.disconnect(); } catch {} workletNode = null; }
+  if (ws) { try { ws.close(); } catch {} ws = null; }
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  if (ctx) { try { ctx.close(); } catch {} ctx = null; }
+  ui.mic.classList.remove('recording');
+  ui.mic.setAttribute('aria-label', 'Start recording');
+  setRecording(false);
+
+  if (history.length > 0) ui.dl.hidden = false;
+  diag(`stopped · ${history.length} lines`);
+}
+
+// ── Export Markdown ───────────────────────────────────────────────────
+// Sort chronologically, group near-simultaneous EN+JP pairs (same session
+// tag, < 1.5s apart), render as "[time] EN: ... / JP: ..." blocks.
+function exportMd() {
+  if (history.length === 0) return;
+  const sorted = [...history].sort((a, b) => a.ts.localeCompare(b.ts));
+  const startedAt = new Date(sorted[0].ts);
+  const stamp = startedAt.toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
+
+  // Pair adjacent entries from the same session that arrived within
+  // 1500ms — those are the same utterance, different language.
+  const pairs = [];
+  for (let i = 0; i < sorted.length; i++) {
+    const e = sorted[i];
+    const prev = pairs[pairs.length - 1];
+    if (prev &&
+        prev.session && e.session && prev.session === e.session &&
+        (new Date(e.ts) - new Date(prev.ts)) < 1500 &&
+        !prev[e.panel]) {
+      prev[e.panel] = e.text;
+      continue;
+    }
+    pairs.push({ ts: e.ts, session: e.session, [e.panel]: e.text });
+  }
+
+  const out = [
+    `# earpiece transcript`,
+    ``,
+    `**Started** ${startedAt.toLocaleString()}`,
+    `**Lines** ${history.length} (${pairs.length} utterances)`,
+    ``,
+    `---`,
+    ``,
+  ];
+  for (const p of pairs) {
+    const time = fmtClockTime(new Date(p.ts));
+    out.push(`**${time}**`);
+    if (p.left)  out.push(`- EN — ${p.left}`);
+    if (p.right) out.push(`- JP — ${p.right}`);
+    out.push(``);
+  }
+
+  const blob = new Blob([out.join('\n')], { type: 'text/markdown' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `earpiece_${stamp}.md`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+  diag('exported');
+}
+
+ui.mic.addEventListener('click', () => { if (active) stop(); else start().catch(e => console.error(e)); });
+ui.dl.addEventListener('click', exportMd);
+window.addEventListener('beforeunload', () => { if (active) stop(); });
+</script>
+
+</body>
+</html>

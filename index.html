@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>earpiece</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@300;400;500;600;700&family=IBM+Plex+Sans+JP:wght@300;400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="style.css">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+  <meta name="theme-color" content="#FAF9F6">
+</head>
+<body>
+  <div class="ambient" id="ambient"></div>
+
+  <div class="app" id="app">
+    <header class="header">
+      <h1 class="brand">earpiece</h1>
+      <nav class="mode-toggle">
+        <button class="mode-opt active" data-mode="convo" id="mode-convo">CONVO</button>
+        <span class="mode-sep">·</span>
+        <button class="mode-opt" data-mode="meeting" id="mode-meeting">MEETING</button>
+      </nav>
+      <button class="gear-btn" id="gear-btn" aria-label="Menu">
+        <span>⋯</span>
+      </button>
+    </header>
+
+    <div class="session-timer" id="session-timer"></div>
+
+    <section class="transcript" id="transcript">
+      <div class="empty-state" id="empty-state">
+        <div class="empty-label">NOT LISTENING</div>
+        <h2 class="empty-title" id="empty-title">Tap record.<br>Speak Japanese.<br>Read English below.</h2>
+        <p class="empty-hint" id="empty-hint"></p>
+      </div>
+    </section>
+
+    <button class="scroll-latest" id="scroll-latest" aria-label="Scroll to latest">
+      <span id="scroll-latest-count">1 NEW</span>
+      <span class="arrow">↓</span>
+    </button>
+
+    <footer class="controls">
+      <div class="control-wrap">
+        <div class="vu-meter" aria-hidden="true">
+          <div class="vu-fill" id="mic-vu"></div>
+        </div>
+        <button class="mic-btn" id="mic-btn" aria-label="Record">
+          <span class="mic-dot"></span>
+          <span class="mic-label" id="mic-hint">RECORD</span>
+          <span class="mic-icon"></span>
+          <span class="stop-icon"></span>
+        </button>
+      </div>
+    </footer>
+  </div>
+
+  <!-- Menu -->
+  <div class="menu-overlay" id="menu-overlay">
+    <div class="menu-card">
+      <div class="menu-head">
+        <span class="menu-label">MENU</span>
+        <button class="menu-close" id="menu-close" aria-label="Close">×</button>
+      </div>
+      <button class="menu-item" id="menu-new-session">
+        <span class="menu-item-label">New session</span>
+        <span class="menu-hint">Start fresh</span>
+      </button>
+      <button class="menu-item" id="menu-copy-all">
+        <span class="menu-item-label">Copy transcript</span>
+        <span class="menu-hint">All entries</span>
+      </button>
+      <button class="menu-item" id="menu-settings">
+        <span class="menu-item-label">Settings</span>
+        <span class="menu-hint"></span>
+      </button>
+      <button class="menu-item danger" id="menu-clear-all">
+        <span class="menu-item-label">Clear history</span>
+        <span class="menu-hint">Can't be undone</span>
+      </button>
+      <div class="menu-brag">
+        <div class="brag-label">EARPIECE DOES NOT HAVE</div>
+        <div class="brag-list">
+          <span>Onboarding</span>
+          <span>·</span>
+          <span>Tabs</span>
+          <span>·</span>
+          <span>Shadows</span>
+          <span>·</span>
+          <span>An account</span>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings -->
+  <div class="settings-overlay" id="settings-overlay">
+    <div class="settings-card">
+      <div class="settings-head">
+        <span class="settings-label">SETTINGS</span>
+        <button class="settings-close" id="settings-close" aria-label="Close">×</button>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-row-label">ENGINE</div>
+        <div class="seg">
+          <button class="seg-btn" data-engine="whisper" id="seg-whisper">Whisper · Mac mini</button>
+          <button class="seg-btn" data-engine="web" id="seg-web">Browser</button>
+        </div>
+        <p class="settings-hint" id="engine-hint">Local. Best quality.</p>
+      </div>
+
+      <div class="settings-group" id="server-group">
+        <div class="settings-row-label">SERVER</div>
+        <input type="text" id="server-url" class="settings-input" placeholder="https://…" autocapitalize="off" autocorrect="off" spellcheck="false">
+        <div class="settings-row">
+          <button class="settings-btn ghost" id="test-server">Test</button>
+          <span class="settings-status" id="server-status"></span>
+        </div>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-row-label">MICROPHONE</div>
+        <select id="mic-select" class="settings-input"></select>
+        <p class="settings-hint" id="mic-hint-text">Pin a specific mic so macOS Continuity doesn't grab your iPhone when it's nearby.</p>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-row-label">VOICE</div>
+        <select id="voice-select" class="settings-input"></select>
+      </div>
+
+      <div class="settings-group">
+        <div class="settings-row-label">WHISPER MODEL</div>
+        <div class="seg">
+          <button class="seg-btn" data-model="accuracy" id="seg-accuracy">Accuracy</button>
+          <button class="seg-btn" data-model="speed" id="seg-speed">Speed</button>
+        </div>
+        <p class="settings-hint" id="model-hint">Large-v3 — best for quiet speech &amp; names.</p>
+      </div>
+
+      <div class="settings-group">
+        <label class="toggle-row">
+          <span class="toggle-label">Reply button on every entry</span>
+          <input type="checkbox" id="coaching-toggle" class="toggle-input">
+          <span class="toggle-switch"></span>
+        </label>
+        <label class="toggle-row">
+          <span class="toggle-label">Debug log</span>
+          <input type="checkbox" id="debug-toggle" class="toggle-input">
+          <span class="toggle-switch"></span>
+        </label>
+      </div>
+
+      <div class="settings-group glossary-group">
+        <div class="glossary-head">
+          <div class="settings-row-label">GLOSSARY</div>
+          <span class="settings-status" id="glossary-count"></span>
+        </div>
+        <p class="settings-hint">
+          Names &amp; places we've heard before. Whisper uses these as hotwords
+          so it transcribes them correctly next time.
+        </p>
+        <div class="glossary-list" id="glossary-list"></div>
+        <div class="settings-row">
+          <button class="settings-btn ghost" id="glossary-refresh">Refresh</button>
+          <button class="settings-btn ghost danger" id="glossary-clear">Clear all</button>
+        </div>
+      </div>
+
+      <button class="settings-btn primary" id="settings-save">Save</button>
+    </div>
+  </div>
+
+  <div class="debug-log" id="debug-log"></div>
+
+  <!-- Onboarding (minimal version — rarely shown, text-only) -->
+  <div class="onboard-overlay" id="onboard-overlay">
+    <div class="onboard-card">
+      <div class="onboard-step active" data-step="0">
+        <div class="onboard-label">EARPIECE</div>
+        <h2>Real-time translation for Japanese conversations.</h2>
+        <p>Runs on your own hardware. Nothing leaves your network.</p>
+      </div>
+      <div class="onboard-step" data-step="1">
+        <div class="onboard-label">CONVO</div>
+        <h2>Push to translate.</h2>
+        <p>Tap, speak Japanese, tap. Hear English in your earbuds.</p>
+      </div>
+      <div class="onboard-step" data-step="2">
+        <div class="onboard-label">MEETING</div>
+        <h2>Continuous, live.</h2>
+        <p>Tap once. Japanese appears as spoken. English fills in.</p>
+      </div>
+      <div class="onboard-footer">
+        <span class="onboard-progress"><span id="onboard-progress-fill"></span></span>
+        <button class="onboard-btn" id="onboard-next">NEXT →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Error -->
+  <div class="error-overlay" id="error-overlay">
+    <div class="error-card">
+      <div class="error-label">ERROR</div>
+      <h3 class="error-title" id="error-title">Something went wrong.</h3>
+      <p class="error-msg" id="error-msg"></p>
+      <button class="error-btn" id="error-dismiss">OK</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script type="module" src="js/app.js"></script>
+</body>
+</html>

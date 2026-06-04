@@ -1,0 +1,458 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>earpiece — ink dispersion</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Syne:wght@400;600;700;800&family=DM+Sans:opsz,wght@9..40,300;9..40,400;9..40,500&family=DM+Mono:wght@300;400&family=Noto+Sans+JP:wght@300;400;500;700&display=swap" rel="stylesheet">
+  <style>
+    :root {
+      --bg: #06060A;
+      --accent-cool: #00D0FF;
+      --accent-warm: #F0A030;
+      --text: #E6E1DB;
+      --text-sec: #6B6580;
+      --text-dim: #2E2B40;
+      --surface: rgba(20,20,34,0.6);
+      --border: #1A1928;
+    }
+    *, *::before, *::after { margin:0; padding:0; box-sizing:border-box; }
+    html, body {
+      height:100%; overflow:hidden; background:var(--bg); color:var(--text);
+      font-family:'DM Sans',sans-serif; -webkit-font-smoothing:antialiased;
+      -webkit-tap-highlight-color:transparent;
+    }
+    canvas#grain {
+      position:fixed; inset:0; z-index:9999; pointer-events:none;
+      opacity:0.03; mix-blend-mode:overlay;
+    }
+    canvas#scene {
+      position:fixed; top:0; left:50%; transform:translateX(-50%);
+      z-index:1; max-width:430px;
+    }
+
+    .ui {
+      position:relative; z-index:2;
+      max-width:430px; margin:0 auto; height:100%;
+      display:flex; flex-direction:column;
+      padding: env(safe-area-inset-top, 20px) 24px env(safe-area-inset-bottom, 20px);
+      pointer-events:none;
+    }
+    .ui > * { pointer-events:auto; }
+
+    .header {
+      display:flex; justify-content:space-between; align-items:center;
+      padding:16px 0 0;
+    }
+    .status {
+      display:flex; align-items:center; gap:7px;
+      padding:6px 14px; border-radius:100px;
+      font-family:'DM Mono',monospace; font-size:11px; letter-spacing:0.5px;
+    }
+    .status.cool { background:rgba(0,208,255,0.1); color:var(--accent-cool); }
+    .status .dot {
+      width:6px; height:6px; border-radius:50%; background:var(--accent-cool);
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%,100% { opacity:1; transform:scale(1); }
+      50% { opacity:0.4; transform:scale(0.8); }
+    }
+
+    .spacer { flex:1; }
+
+    .transcript {
+      max-height: 35vh;
+      overflow-y:auto; -webkit-overflow-scrolling:touch;
+      mask-image: linear-gradient(transparent 0%, black 10%, black 90%, transparent 100%);
+      -webkit-mask-image: linear-gradient(transparent 0%, black 10%, black 90%, transparent 100%);
+      padding:8px 0;
+      scroll-behavior:smooth;
+    }
+    .transcript::-webkit-scrollbar { display:none; }
+    .t-entry {
+      padding:12px 0;
+      border-top:1px solid rgba(255,255,255,0.03);
+      animation: slideIn 0.5s ease-out both;
+    }
+    .t-entry:first-child { border-top:none; }
+    @keyframes slideIn {
+      from { opacity:0; transform:translateY(10px); }
+      to { opacity:1; transform:translateY(0); }
+    }
+    .t-entry .jp {
+      font-family:'Noto Sans JP',sans-serif; font-size:15px;
+      color:var(--accent-cool); line-height:1.6; margin-bottom:4px;
+    }
+    .t-entry .en {
+      font-size:14px; color:var(--text); opacity:0;
+      animation: fadeEn 0.4s ease-out 0.35s both;
+    }
+    @keyframes fadeEn {
+      from { opacity:0; transform:translateX(-5px); }
+      to { opacity:0.85; transform:translateX(0); }
+    }
+
+    .controls {
+      display:flex; justify-content:center; padding:16px 0 8px;
+    }
+    .stop-btn {
+      width:62px; height:62px; border-radius:50%;
+      border:2px solid rgba(255,255,255,0.08);
+      background:var(--surface); backdrop-filter:blur(20px);
+      -webkit-backdrop-filter:blur(20px);
+      cursor:pointer; display:flex; align-items:center; justify-content:center;
+      transition:all 0.3s;
+    }
+    .stop-btn:active { transform:scale(0.92); border-color:rgba(255,255,255,0.15); }
+    .stop-btn .icon {
+      width:18px; height:18px; border-radius:4px; background:var(--text);
+    }
+
+    .phase-label {
+      text-align:center; padding:6px 0;
+      font-family:'DM Mono',monospace; font-size:10px;
+      letter-spacing:2px; text-transform:uppercase;
+      color:var(--text-dim); transition: color 0.5s;
+      min-height:24px;
+    }
+    .phase-label.listening { color: var(--accent-cool); }
+    .phase-label.translating { color: var(--accent-warm); }
+  </style>
+</head>
+<body>
+  <canvas id="grain"></canvas>
+  <canvas id="scene"></canvas>
+
+  <div class="ui">
+    <div class="header">
+      <div style="font-family:'Syne',sans-serif;font-weight:800;font-size:18px;letter-spacing:-0.5px;">
+        <span style="color:var(--accent-warm)">ear</span>piece
+      </div>
+      <div class="status cool"><span class="dot"></span>Listening</div>
+    </div>
+
+    <div class="spacer"></div>
+    <div class="phase-label" id="phase"></div>
+    <div class="transcript" id="transcript"></div>
+    <div class="controls">
+      <button class="stop-btn" onclick="location.reload()"><div class="icon"></div></button>
+    </div>
+  </div>
+
+  <script>
+  // ─── Grain ───
+  (() => {
+    const c = document.getElementById('grain'), x = c.getContext('2d');
+    c.width = 256; c.height = 256;
+    const d = x.createImageData(256,256);
+    for (let i = 0; i < d.data.length; i+=4) {
+      const v = Math.random()*255;
+      d.data[i]=d.data[i+1]=d.data[i+2]=v; d.data[i+3]=255;
+    }
+    x.putImageData(d,0,0);
+  })();
+
+  // ─── Particle system ───
+  const canvas = document.getElementById('scene');
+  const ctx = canvas.getContext('2d');
+  const dpr = window.devicePixelRatio || 1;
+
+  let W, H, cx, cy;
+  function resize() {
+    W = Math.min(window.innerWidth, 430);
+    H = window.innerHeight;
+    canvas.width = W * dpr;
+    canvas.height = H * dpr;
+    canvas.style.width = W + 'px';
+    canvas.style.height = H + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    cx = W / 2;
+    cy = H * 0.32;
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  // ─── Sample text to get particle targets ───
+  function sampleText(text, font, size, maxW) {
+    const tc = document.createElement('canvas');
+    const tx = tc.getContext('2d');
+    tc.width = maxW * 2;
+    tc.height = size * 3;
+    tx.fillStyle = '#fff';
+    tx.font = `${size}px ${font}`;
+    tx.textAlign = 'center';
+    tx.textBaseline = 'middle';
+    tx.fillText(text, tc.width/2, tc.height/2);
+    const img = tx.getImageData(0, 0, tc.width, tc.height);
+    const points = [];
+    const step = 3;
+    for (let y = 0; y < tc.height; y += step) {
+      for (let x = 0; x < tc.width; x += step) {
+        if (img.data[(y * tc.width + x) * 4 + 3] > 128) {
+          points.push({
+            x: (x - tc.width/2) * 0.5 + cx,
+            y: (y - tc.height/2) * 0.5 + cy
+          });
+        }
+      }
+    }
+    // Limit to ~600 points, randomly sampled
+    if (points.length > 600) {
+      const sampled = [];
+      const skip = points.length / 600;
+      for (let i = 0; i < points.length; i += skip) {
+        sampled.push(points[Math.floor(i)]);
+      }
+      return sampled;
+    }
+    return points;
+  }
+
+  // ─── Particles ───
+  const NUM = 600;
+  const particles = [];
+
+  function orbPosition(i) {
+    const angle = (i / NUM) * Math.PI * 2 + Math.sin(i * 0.1) * 0.3;
+    const r = 65 + Math.sin(i * 0.37) * 12 + Math.cos(i * 0.73) * 8;
+    return { x: cx + Math.cos(angle) * r, y: cy + Math.sin(angle) * r };
+  }
+
+  for (let i = 0; i < NUM; i++) {
+    const pos = orbPosition(i);
+    particles.push({
+      x: pos.x, y: pos.y,
+      tx: pos.x, ty: pos.y,     // target
+      ox: pos.x, oy: pos.y,     // orb home
+      vx: 0, vy: 0,
+      size: 1.2 + Math.random() * 1.5,
+      alpha: 0.4 + Math.random() * 0.6,
+      hue: Math.random(),        // 0 = cool, 1 = warm
+      drift: Math.random() * Math.PI * 2,
+      driftSpeed: 0.002 + Math.random() * 0.004,
+      driftRadius: 1 + Math.random() * 3,
+    });
+  }
+
+  // ─── States ───
+  // idle → listening → dispersing → forming_text → translated → reconverging → idle
+  let state = 'idle';
+  let stateTime = 0;
+  let textTargets = null;
+  let currentColor = { r: 0, g: 208, b: 255 }; // cool
+  let targetColor = { r: 0, g: 208, b: 255 };
+  const COOL = { r: 0, g: 208, b: 255 };
+  const WARM = { r: 240, g: 160, b: 48 };
+  const MIX  = { r: 120, g: 184, b: 152 };
+
+  function setState(s) {
+    state = s;
+    stateTime = 0;
+    const label = document.getElementById('phase');
+    switch(s) {
+      case 'idle':
+        label.textContent = '';
+        label.className = 'phase-label';
+        targetColor = COOL;
+        particles.forEach((p, i) => {
+          const pos = orbPosition(i);
+          p.ox = pos.x; p.oy = pos.y;
+          p.tx = pos.x; p.ty = pos.y;
+        });
+        break;
+      case 'listening':
+        label.textContent = 'listening';
+        label.className = 'phase-label listening';
+        targetColor = COOL;
+        // Expand orb slightly, add turbulence
+        particles.forEach((p, i) => {
+          const pos = orbPosition(i);
+          const expand = 1.15;
+          p.tx = cx + (pos.x - cx) * expand;
+          p.ty = cy + (pos.y - cy) * expand;
+        });
+        break;
+      case 'dispersing':
+        label.textContent = 'processing';
+        label.className = 'phase-label';
+        targetColor = MIX;
+        // Explode outward
+        particles.forEach(p => {
+          const angle = Math.atan2(p.y - cy, p.x - cx) + (Math.random()-0.5)*1.5;
+          const dist = 120 + Math.random() * 100;
+          p.tx = cx + Math.cos(angle) * dist;
+          p.ty = cy + Math.sin(angle) * dist;
+          p.vx += (Math.random()-0.5) * 3;
+          p.vy += (Math.random()-0.5) * 3;
+        });
+        break;
+      case 'forming_text':
+        label.textContent = 'translating';
+        label.className = 'phase-label translating';
+        targetColor = WARM;
+        if (textTargets && textTargets.length > 0) {
+          particles.forEach((p, i) => {
+            const t = textTargets[i % textTargets.length];
+            p.tx = t.x;
+            p.ty = t.y;
+          });
+        }
+        break;
+      case 'translated':
+        label.textContent = '';
+        label.className = 'phase-label';
+        // Hold text shape briefly
+        break;
+      case 'reconverging':
+        label.textContent = '';
+        label.className = 'phase-label';
+        targetColor = COOL;
+        particles.forEach((p, i) => {
+          const pos = orbPosition(i);
+          p.ox = pos.x; p.oy = pos.y;
+          p.tx = pos.x; p.ty = pos.y;
+        });
+        break;
+    }
+  }
+
+  // ─── Simulation data ───
+  const phrases = [
+    { jp: 'いらっしゃいませ', en: 'Welcome', display: 'Welcome' },
+    { jp: 'ポイントカードはお持ちですか？', en: 'Do you have a points card?', display: 'Points card?' },
+    { jp: '袋はご利用になりますか？', en: 'Would you like a bag?', display: 'Bag?' },
+    { jp: 'お会計は320円になります', en: 'Your total is 320 yen', display: '320 yen' },
+    { jp: 'ありがとうございました', en: 'Thank you', display: 'Thank you' },
+  ];
+  let phraseIdx = 0;
+
+  function runPhraseCycle() {
+    if (phraseIdx >= phrases.length) {
+      setState('idle');
+      return;
+    }
+    const phrase = phrases[phraseIdx];
+
+    // 1. Listening
+    setState('listening');
+
+    setTimeout(() => {
+      // 2. Disperse
+      setState('dispersing');
+
+      setTimeout(() => {
+        // 3. Form translation text
+        textTargets = sampleText(phrase.display, 'Syne, sans-serif', 52, W);
+        setState('forming_text');
+
+        setTimeout(() => {
+          // 4. Hold
+          setState('translated');
+          // Add transcript entry
+          addTranscript(phrase.jp, phrase.en);
+
+          setTimeout(() => {
+            // 5. Reconverge to orb
+            setState('reconverging');
+
+            setTimeout(() => {
+              phraseIdx++;
+              runPhraseCycle();
+            }, 1400);
+          }, 1200);
+        }, 1200);
+      }, 800);
+    }, 1800);
+  }
+
+  function addTranscript(jp, en) {
+    const area = document.getElementById('transcript');
+    const div = document.createElement('div');
+    div.className = 't-entry';
+    div.innerHTML = `<div class="jp">${jp}</div><div class="en">${en}</div>`;
+    area.appendChild(div);
+    area.scrollTop = area.scrollHeight;
+  }
+
+  // ─── Render loop ───
+  let time = 0;
+  function draw() {
+    time++;
+    stateTime++;
+    ctx.clearRect(0, 0, W, H);
+
+    // Lerp color
+    currentColor.r += (targetColor.r - currentColor.r) * 0.03;
+    currentColor.g += (targetColor.g - currentColor.g) * 0.03;
+    currentColor.b += (targetColor.b - currentColor.b) * 0.03;
+
+    // Background glow
+    const grd = ctx.createRadialGradient(cx, cy, 0, cx, cy, 180);
+    grd.addColorStop(0, `rgba(${Math.round(currentColor.r)},${Math.round(currentColor.g)},${Math.round(currentColor.b)},0.06)`);
+    grd.addColorStop(1, 'transparent');
+    ctx.fillStyle = grd;
+    ctx.fillRect(0, 0, W, H);
+
+    // Update + draw particles
+    const turbulence = state === 'listening' ? 1.5 :
+                       state === 'dispersing' ? 3.0 :
+                       state === 'forming_text' ? 0.3 : 0.5;
+    const springK = state === 'dispersing' ? 0.02 :
+                    state === 'forming_text' ? 0.06 :
+                    state === 'reconverging' ? 0.05 : 0.04;
+    const damping = 0.88;
+
+    for (const p of particles) {
+      // Spring toward target
+      const dx = p.tx - p.x;
+      const dy = p.ty - p.y;
+      p.vx += dx * springK;
+      p.vy += dy * springK;
+
+      // Drift
+      p.drift += p.driftSpeed;
+      p.vx += Math.cos(p.drift) * turbulence * 0.08;
+      p.vy += Math.sin(p.drift) * turbulence * 0.08;
+
+      // Damping
+      p.vx *= damping;
+      p.vy *= damping;
+
+      // Move
+      p.x += p.vx;
+      p.y += p.vy;
+
+      // Draw
+      const cr = Math.round(currentColor.r + (240 - currentColor.r) * p.hue * 0.3);
+      const cg = Math.round(currentColor.g + (160 - currentColor.g) * p.hue * 0.3);
+      const cb = Math.round(currentColor.b + (48 - currentColor.b) * p.hue * 0.3);
+
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.size, 0, Math.PI * 2);
+      ctx.fillStyle = `rgba(${cr},${cg},${cb},${p.alpha})`;
+      ctx.fill();
+    }
+
+    // Inner glow on orb (when in orb states)
+    if (state === 'idle' || state === 'listening' || state === 'reconverging') {
+      const breathe = Math.sin(time * 0.02) * 0.3 + 0.7;
+      const ig = ctx.createRadialGradient(cx, cy, 0, cx, cy, 50);
+      ig.addColorStop(0, `rgba(${Math.round(currentColor.r)},${Math.round(currentColor.g)},${Math.round(currentColor.b)},${0.08 * breathe})`);
+      ig.addColorStop(1, 'transparent');
+      ctx.fillStyle = ig;
+      ctx.fillRect(cx - 80, cy - 80, 160, 160);
+    }
+
+    requestAnimationFrame(draw);
+  }
+
+  // ─── Init ───
+  draw();
+  // Start cycle after a brief pause
+  setTimeout(() => runPhraseCycle(), 1500);
+  </script>
+</body>
+</html>
