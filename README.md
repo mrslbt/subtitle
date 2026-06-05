@@ -35,16 +35,33 @@ source .venv/bin/activate
 pip install -r server/requirements.txt
 ```
 
-## Run
+## Run (local dev)
 
 ```bash
 export OPENAI_API_KEY="sk-..."
 python3 server/server.py
 ```
 
-Open http://localhost:8787/live. Press the round button. Allow the mic. Speak either language.
+Open http://localhost:8787/live. The page renders with a `NO KEY` chip in the top right. Click it, paste your key in the settings card, save. Press the round button. Allow the mic. Speak either language.
+
+The key is stored only in `localStorage`. The server falls back to the env key if the client doesn't send one, which makes local testing fast.
 
 To stop, press the button again. The **EXPORT · MD** button appears next to the mic. Click it to download a timestamped Markdown transcript of the whole conversation.
+
+## Deploy to Cloudflare (subtitles.bymarsel.me)
+
+Subtitle runs as a single Cloudflare Worker — the page and the WebSocket proxy live in one place. No backend server to keep alive.
+
+```bash
+cd worker
+npx wrangler login
+npx wrangler deploy
+```
+
+Then attach a custom domain:
+- Cloudflare dashboard → **Workers & Pages** → `subtitle` → **Settings** → **Triggers** → **Custom Domains** → **Add Custom Domain** → `subtitles.bymarsel.me`
+
+Done. The Worker uses **only** the API key each visitor pastes in settings. No server-side OpenAI key is stored or required. Users bring their own, costs land on their own OpenAI account.
 
 ## Cost
 
@@ -62,20 +79,23 @@ The two sessions run because the model is unidirectional per session (one input 
 
 ```
 subtitle/
-├── live.html              page served at /live — the whole UI
-├── js/
-│   └── pcm-worklet.js     AudioWorklet: mic → 24kHz mono PCM16 frames
-└── server/
-    ├── server.py          FastAPI server. Serves /live and proxies /realtime
-    │                      to two upstream gpt-realtime-translate sessions
+├── worker/                 Cloudflare Worker — production deploy target
+│   ├── wrangler.toml
+│   ├── src/index.js        Worker code: WebSocket proxy with BYOK auth
+│   └── public/             Static assets (served by Worker AND local Python)
+│       ├── index.html      The page — broadcast-style subtitle UI
+│       └── js/pcm-worklet.js
+└── server/                 Optional FastAPI server for local dev
+    ├── server.py           Same /realtime semantics as the Worker
     └── requirements.txt
 ```
 
 | File | What it does |
 |---|---|
-| `live.html` | Two-column broadcast-style subtitle UI. Sentence splitter (Japanese 。！？ unambiguous, English `.!?` + space lookahead to skip abbreviations). 2.5s silence fallback for utterances the model emits without terminal punctuation. Markdown export. |
-| `js/pcm-worklet.js` | Runs inside `AudioWorkletGlobalScope`. Downsamples mic input from 48kHz to 24kHz with linear interpolation, converts Float32 to little-endian PCM16, posts frames to the main thread every 100ms. Zero-copy transferable ArrayBuffers. |
-| `server/server.py` | FastAPI. Hosts the page, exposes `/realtime` WebSocket. Opens two upstream WebSockets to `wss://api.openai.com/v1/realtime/translations?model=gpt-realtime-translate`, configures one for EN output and one for JP output, fans the same audio frames to both, and routes events back to the right panel based on the language of the text (not which session produced it). |
+| `worker/public/index.html` | Two-column broadcast-style subtitle UI. Sentence splitter (Japanese 。！？ unambiguous, English `.!?` + space lookahead to skip abbreviations). 2.5s silence fallback for utterances the model emits without terminal punctuation. Settings card for BYOK key entry. Markdown export. |
+| `worker/public/js/pcm-worklet.js` | Runs inside `AudioWorkletGlobalScope`. Downsamples mic input from 48kHz to 24kHz with linear interpolation, converts Float32 to little-endian PCM16, posts frames to the main thread every 100ms. Zero-copy transferable ArrayBuffers. |
+| `worker/src/index.js` | Cloudflare Worker. Routes `/realtime` to the WebSocket handler, everything else to the static assets binding. Waits for the client's `{type:"auth", key}` frame, opens two upstream WebSockets to `wss://api.openai.com/v1/realtime/translations?model=gpt-realtime-translate` with that key, fans audio to both, routes events back by language. |
+| `server/server.py` | FastAPI mirror of the Worker for local dev. Same `/realtime` protocol. Accepts the same BYOK auth message; falls back to `OPENAI_API_KEY` env var if the client doesn't send one. |
 
 ## How the bidirectional flow works
 
@@ -111,9 +131,11 @@ Result: every utterance fills both panels. The Japanese speaker reads CH B for t
 
 ## Privacy
 
-Audio leaves your machine only to OpenAI, only on your own API key. The server doesn't log audio. There's no analytics, no telemetry, no account. The Markdown export is a download — it never round-trips through any server.
+Audio leaves your machine only to OpenAI, only on your own API key. The server doesn't log audio. There's no analytics, no telemetry, no account. The Markdown export is a download. It never round-trips through any server.
 
-The OpenAI key sits in your shell environment or `server/.env`. The repo's `.gitignore` excludes `.env` so it can't get committed by accident.
+On the Cloudflare deploy, your key lives in your own browser's `localStorage`. It rides as the first WebSocket message on each new session, gets used to authenticate the upstream OpenAI connections, and is never written to any log or database. The Worker is stateless.
+
+For local dev, the key can also live in your shell environment as `OPENAI_API_KEY`. The repo's `.gitignore` excludes `.env` and `server/.env` so a key can't get committed by accident.
 
 ## Roadmap
 

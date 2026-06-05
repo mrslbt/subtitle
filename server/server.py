@@ -1011,12 +1011,13 @@ _REALTIME_INPUT_DONE_EVENTS = {
 }
 
 
-async def _open_translate_session(target_lang: str):
+async def _open_translate_session(target_lang: str, api_key: str):
     """Open one upstream WebSocket to gpt-realtime-translate configured
-    for a given output language. Returns the connected websocket."""
+    for a given output language using the provided api_key. Returns the
+    connected websocket."""
     upstream = await websockets.connect(
         OPENAI_REALTIME_URL,
-        additional_headers={"Authorization": f"Bearer {OPENAI_API_KEY}"},
+        additional_headers={"Authorization": f"Bearer {api_key}"},
         max_size=16 * 1024 * 1024,
     )
     await upstream.send(_json.dumps({
@@ -1053,10 +1054,32 @@ async def realtime_translate(ws: WebSocket):
     """
     await ws.accept()
 
-    if not OPENAI_API_KEY:
+    # BYOK: wait briefly for the first client message. If it's
+    # {type:"auth", key:"sk-..."} we use that key; if it's anything else
+    # or never arrives, we fall back to the server env key. The Worker
+    # deployment ALWAYS sends auth (and won't have an env key); local
+    # dev sends auth too but tolerates env fallback for quick testing.
+    api_key = OPENAI_API_KEY
+    try:
+        first = await asyncio.wait_for(ws.receive_text(), timeout=10)
+        try:
+            first_msg = _json.loads(first)
+        except Exception:
+            first_msg = None
+        if (
+            isinstance(first_msg, dict)
+            and first_msg.get("type") == "auth"
+            and isinstance(first_msg.get("key"), str)
+            and first_msg["key"].startswith("sk-")
+        ):
+            api_key = first_msg["key"]
+    except (asyncio.TimeoutError, WebSocketDisconnect):
+        pass
+
+    if not api_key:
         await ws.send_text(_json.dumps({
             "type": "error",
-            "message": "OPENAI_API_KEY not configured on server",
+            "message": "no OpenAI key (client must send {type:'auth', key:...})",
         }))
         await ws.close()
         return
@@ -1069,8 +1092,8 @@ async def realtime_translate(ws: WebSocket):
         #   en_up — output English (fires when JP is heard)
         #   ja_up — output Japanese (fires when EN is heard)
         en_up, ja_up = await asyncio.gather(
-            _open_translate_session("en"),
-            _open_translate_session("ja"),
+            _open_translate_session("en", api_key),
+            _open_translate_session("ja", api_key),
         )
         sessions["en"] = en_up
         sessions["ja"] = ja_up
@@ -1269,20 +1292,31 @@ if (WEB_ROOT / "index.html").exists():
         from fastapi.responses import RedirectResponse
         return RedirectResponse("/", status_code=301)
 
-    # Minimal standalone page — one button, EN streams in, no JP, no menus.
-    # Built for fast local use: spin up the server on your laptop, open
-    # http://localhost:8787/live, press the button, talk.
+    # Subtitle live page. Canonical source = worker/public/index.html (same
+    # file shipped to Cloudflare). Falls back to a root-level live.html
+    # if someone has the older layout. Returns 404 if neither exists.
     @app.get("/live")
     async def live_page():
-        path = WEB_ROOT / "live.html"
-        if not path.exists():
-            raise HTTPException(status_code=404, detail="live.html not found")
-        return HTMLResponse(path.read_text(), headers=NO_CACHE)
+        for path in (WEB_ROOT / "worker" / "public" / "index.html",
+                     WEB_ROOT / "live.html"):
+            if path.exists():
+                return HTMLResponse(path.read_text(), headers=NO_CACHE)
+        raise HTTPException(status_code=404, detail="live page not found")
 
     @app.get("/js/{name}")
     async def js_file(name: str):
-        path = WEB_ROOT / "js" / name
-        if not path.exists() or ".." in name:
+        if ".." in name:
+            raise HTTPException(status_code=404)
+        # Canonical first (the Worker-bound public dir), then legacy js/.
+        # pcm-worklet.js lives in worker/public/js/; the legacy convo/meeting
+        # app's modules still live in /js at repo root.
+        path = None
+        for base in (WEB_ROOT / "worker" / "public" / "js", WEB_ROOT / "js"):
+            candidate = base / name
+            if candidate.exists():
+                path = candidate
+                break
+        if path is None:
             raise HTTPException(status_code=404)
         content = path.read_text()
         v = _compute_version()

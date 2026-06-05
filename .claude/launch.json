@@ -1,0 +1,11 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "earpiece",
+      "runtimeExecutable": "npx",
+      "runtimeArgs": ["-y", "http-server", "/Users/marselbait/Desktop/code_related/earpiece", "-p", "8090", "-c-1", "--cors", "-s"],
+      "port": 8090
+    }
+  ]
+}

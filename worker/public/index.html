@@ -511,6 +511,145 @@ button {
   text-align: right;
   z-index: 4;
 }
+
+/* ─── KEY CHIP (header right) ───────────────────────────────────────
+   Replaces the static SID. Doubles as a settings button. Shows the
+   last 4 chars of the active key, or NO KEY (red) if unset. Click
+   opens the settings modal. */
+.key-chip {
+  background: transparent;
+  border: 1px solid var(--ink-faint);
+  color: var(--ink-faint);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.15em;
+  padding: 4px 8px;
+  border-radius: 2px;
+  cursor: pointer;
+  display: inline-flex; align-items: center; gap: 6px;
+  text-transform: uppercase;
+  transition: border-color 0.15s, color 0.15s;
+}
+.key-chip:hover { border-color: var(--rule-strong); color: var(--ink-gray); }
+.key-chip .gear { font-size: 11px; line-height: 1; }
+.key-chip.set { color: var(--ink-yellow-dim); border-color: var(--ink-yellow-dim); }
+.key-chip.set:hover { color: var(--ink-yellow); border-color: var(--ink-yellow); }
+.key-chip.missing { color: var(--ink-red); border-color: rgba(255,59,48,0.5); }
+.key-chip.missing:hover { color: var(--ink-red); border-color: var(--ink-red); }
+
+/* ─── MODAL (settings + need-key popup) ─────────────────────────────
+   Centered overlay on top of the page. Same broadcast aesthetic —
+   black card with hairline border, yellow accents, mono labels. */
+.overlay {
+  position: fixed; inset: 0; z-index: 10;
+  background: rgba(0,0,0,0.78);
+  backdrop-filter: blur(6px);
+  display: grid; place-items: center;
+  padding: 24px;
+  animation: fade-in 0.18s ease-out;
+}
+.overlay[hidden] { display: none; }
+@keyframes fade-in { from { opacity: 0; } to { opacity: 1; } }
+
+.card {
+  background: #050505;
+  border: 1px solid var(--rule-strong);
+  width: min(440px, 100%);
+  padding: 24px;
+  position: relative;
+  animation: card-in 0.22s ease-out;
+}
+@keyframes card-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.card h2 {
+  font-family: "Bebas Neue", sans-serif;
+  font-size: 22px; font-weight: 400;
+  letter-spacing: 0.18em;
+  color: var(--ink-white);
+  margin-bottom: 4px;
+}
+.card .subhead {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ink-gray);
+  margin-bottom: 22px;
+}
+.card p {
+  font-size: 13px; line-height: 1.55;
+  color: var(--ink-gray);
+  margin-bottom: 14px;
+}
+.card .field-label {
+  display: block;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px; letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ink-gray);
+  margin-bottom: 8px;
+}
+.card input[type="password"], .card input[type="text"] {
+  width: 100%;
+  background: #000;
+  border: 1px solid var(--rule-strong);
+  color: var(--ink-yellow);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 13px;
+  padding: 10px 12px;
+  border-radius: 2px;
+  outline: none;
+  letter-spacing: 0.02em;
+}
+.card input:focus { border-color: var(--ink-yellow-dim); }
+.card .current-key {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px; letter-spacing: 0.1em;
+  color: var(--ink-yellow-dim);
+  margin-top: 8px;
+}
+.card .actions {
+  display: flex; gap: 10px; margin-top: 18px; justify-content: flex-end;
+}
+.card .actions.left { justify-content: space-between; align-items: center; }
+.card .btn {
+  background: transparent;
+  border: 1px solid var(--rule-strong);
+  color: var(--ink-white);
+  font-family: "JetBrains Mono", monospace;
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  padding: 9px 14px;
+  border-radius: 2px;
+  cursor: pointer;
+  transition: border-color 0.15s, color 0.15s, background 0.15s;
+}
+.card .btn:hover { border-color: var(--ink-yellow); color: var(--ink-yellow); }
+.card .btn.primary {
+  background: var(--ink-yellow); color: #000; border-color: var(--ink-yellow);
+}
+.card .btn.primary:hover { background: var(--ink-white); border-color: var(--ink-white); }
+.card .btn.danger:hover { border-color: var(--ink-red); color: var(--ink-red); }
+.card .btn.link {
+  border: none; padding: 9px 0; color: var(--ink-gray);
+}
+.card .btn.link:hover { color: var(--ink-yellow); }
+.card .close {
+  position: absolute; top: 14px; right: 16px;
+  background: transparent; border: none; color: var(--ink-gray);
+  font-family: "JetBrains Mono", monospace; font-size: 16px;
+  cursor: pointer; line-height: 1;
+}
+.card .close:hover { color: var(--ink-white); }
+.card a.extlink {
+  color: var(--ink-yellow); text-decoration: none;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 11px; letter-spacing: 0.06em;
+}
+.card a.extlink:hover { text-decoration: underline; }
 </style>
 </head>
 <body>
@@ -528,7 +667,9 @@ button {
   </div>
   <div class="meta">
     <span class="count" id="count"><strong>0</strong>LINES</span>
-    <span class="sid" id="sid">SUB · JP</span>
+    <button class="key-chip missing" id="key-chip" type="button" aria-label="API key settings">
+      <span class="gear">⚙</span><span id="key-status">NO KEY</span>
+    </button>
   </div>
 </header>
 
@@ -576,6 +717,52 @@ button {
   </span>
 </footer>
 
+<!-- Settings modal — OpenAI key entry -->
+<div class="overlay" id="settings-overlay" hidden>
+  <div class="card">
+    <button class="close" id="settings-close" aria-label="Close">×</button>
+    <h2>API KEY</h2>
+    <div class="subhead">OPENAI · BRING YOUR OWN</div>
+    <p>
+      Subtitle uses your own OpenAI key. It's stored only in this browser
+      (localStorage) and sent only to subtitles.bymarsel.me when starting
+      a session. We never log it.
+    </p>
+    <p>
+      <a class="extlink" href="https://platform.openai.com/api-keys" target="_blank" rel="noopener">
+        Get a key at platform.openai.com →
+      </a>
+    </p>
+    <label class="field-label" for="key-input">YOUR KEY (sk-…)</label>
+    <input type="password" id="key-input" autocomplete="off" spellcheck="false" placeholder="sk-..." />
+    <div class="current-key" id="current-key-line" hidden></div>
+    <div class="actions left">
+      <button class="btn danger" id="key-clear" type="button" hidden>CLEAR</button>
+      <div style="display:flex; gap:10px; margin-left:auto;">
+        <button class="btn" id="settings-cancel" type="button">CANCEL</button>
+        <button class="btn primary" id="key-save" type="button">SAVE</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- Need-key popup — fires when user presses mic without a key set -->
+<div class="overlay" id="needkey-overlay" hidden>
+  <div class="card">
+    <button class="close" id="needkey-close" aria-label="Close">×</button>
+    <h2>API KEY NEEDED</h2>
+    <div class="subhead">SUBTITLE · BYOK</div>
+    <p>
+      You need an OpenAI API key to use Subtitle. Paste yours in settings,
+      or grab one if you don't have one yet — takes about a minute.
+    </p>
+    <div class="actions">
+      <button class="btn link" id="needkey-getkey" type="button">GET A KEY</button>
+      <button class="btn primary" id="needkey-open-settings" type="button">OPEN SETTINGS</button>
+    </div>
+  </div>
+</div>
+
 <div class="diag" id="diag"></div>
 
 <script type="module">
@@ -595,6 +782,20 @@ const ui = {
   mic: $('mic'),
   dl: $('dl'),
   diag: $('diag'),
+  // BYOK chrome
+  keyChip: $('key-chip'),
+  keyStatus: $('key-status'),
+  settingsOverlay: $('settings-overlay'),
+  settingsClose: $('settings-close'),
+  settingsCancel: $('settings-cancel'),
+  keyInput: $('key-input'),
+  keySave: $('key-save'),
+  keyClear: $('key-clear'),
+  currentKeyLine: $('current-key-line'),
+  needkeyOverlay: $('needkey-overlay'),
+  needkeyClose: $('needkey-close'),
+  needkeyOpenSettings: $('needkey-open-settings'),
+  needkeyGetkey: $('needkey-getkey'),
 };
 const panels = {
   left:  { hist: $('hist-left'),  cur: $('cur-left'),  text: $('cur-left').querySelector('.text')  },
@@ -620,6 +821,79 @@ let silenceTicker = null;
 
 // ── Log line (corner) ─────────────────────────────────────────────────
 function diag(msg) { ui.diag.textContent = msg; console.log('[live]', msg); }
+
+// ── BYOK key management ───────────────────────────────────────────────
+// The OpenAI key lives in this browser only (localStorage). On WS open
+// the client sends {type:'auth', key} as the first message; the server
+// uses that key to authenticate the two upstream sessions and never
+// logs it.
+const KEY_STORE = 'subtitle.openai_key';
+
+function getKey() {
+  try { return localStorage.getItem(KEY_STORE) || ''; } catch { return ''; }
+}
+function setKey(k) {
+  try {
+    if (k) localStorage.setItem(KEY_STORE, k);
+    else localStorage.removeItem(KEY_STORE);
+  } catch {}
+  renderKeyChip();
+}
+function maskKey(k) {
+  if (!k || k.length < 8) return '····';
+  return '····' + k.slice(-4);
+}
+function renderKeyChip() {
+  const k = getKey();
+  if (k && k.startsWith('sk-')) {
+    ui.keyChip.classList.remove('missing');
+    ui.keyChip.classList.add('set');
+    ui.keyStatus.textContent = maskKey(k);
+  } else {
+    ui.keyChip.classList.remove('set');
+    ui.keyChip.classList.add('missing');
+    ui.keyStatus.textContent = 'NO KEY';
+  }
+}
+
+function openSettings() {
+  const k = getKey();
+  ui.keyInput.value = '';
+  ui.keyInput.placeholder = k ? 'Replace existing key (sk-…)' : 'sk-...';
+  if (k) {
+    ui.currentKeyLine.textContent = `Current: ${maskKey(k)}`;
+    ui.currentKeyLine.hidden = false;
+    ui.keyClear.hidden = false;
+  } else {
+    ui.currentKeyLine.hidden = true;
+    ui.keyClear.hidden = true;
+  }
+  ui.settingsOverlay.hidden = false;
+  // Focus after the next paint so the animation doesn't fight the focus
+  setTimeout(() => ui.keyInput.focus(), 50);
+}
+function closeSettings() { ui.settingsOverlay.hidden = true; }
+
+function saveKeyFromInput() {
+  const v = ui.keyInput.value.trim();
+  if (!v) { closeSettings(); return; }
+  if (!v.startsWith('sk-')) {
+    diag('key should start with sk-');
+    ui.keyInput.focus();
+    return;
+  }
+  setKey(v);
+  closeSettings();
+  diag('key saved');
+}
+function clearKey() {
+  setKey('');
+  closeSettings();
+  diag('key cleared');
+}
+
+function openNeedKey() { ui.needkeyOverlay.hidden = false; }
+function closeNeedKey() { ui.needkeyOverlay.hidden = true; }
 
 // ── Time formatters ───────────────────────────────────────────────────
 function fmtElapsed(ms) {
@@ -780,6 +1054,11 @@ function bufToB64(buf) {
 
 async function start() {
   if (active) return;
+  const key = getKey();
+  if (!key || !key.startsWith('sk-')) {
+    openNeedKey();
+    return;
+  }
   ui.mic.disabled = true;
   diag('connecting…');
 
@@ -800,8 +1079,14 @@ async function start() {
   let wsReady = false;
   try {
     await new Promise((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error('server timeout')), 10000);
-      ws.onopen = () => diag('ws open');
+      const timeout = setTimeout(() => reject(new Error('server timeout')), 12000);
+      ws.onopen = () => {
+        diag('ws open · authenticating');
+        // First message: BYOK auth. Server uses this key for the two
+        // upstream gpt-realtime-translate sessions; if missing, server
+        // falls back to its env (local dev only).
+        try { ws.send(JSON.stringify({ type: 'auth', key })); } catch (e) {}
+      };
       ws.onmessage = (ev) => {
         let m; try { m = JSON.parse(ev.data); } catch { return; }
         if (!wsReady && m.type === 'ready') {
@@ -945,6 +1230,27 @@ function exportMd() {
 
 ui.mic.addEventListener('click', () => { if (active) stop(); else start().catch(e => console.error(e)); });
 ui.dl.addEventListener('click', exportMd);
+
+// Settings + needkey overlays
+ui.keyChip.addEventListener('click', openSettings);
+ui.settingsClose.addEventListener('click', closeSettings);
+ui.settingsCancel.addEventListener('click', closeSettings);
+ui.keySave.addEventListener('click', saveKeyFromInput);
+ui.keyClear.addEventListener('click', clearKey);
+ui.keyInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') saveKeyFromInput(); });
+ui.settingsOverlay.addEventListener('click', (e) => { if (e.target === ui.settingsOverlay) closeSettings(); });
+
+ui.needkeyClose.addEventListener('click', closeNeedKey);
+ui.needkeyOverlay.addEventListener('click', (e) => { if (e.target === ui.needkeyOverlay) closeNeedKey(); });
+ui.needkeyOpenSettings.addEventListener('click', () => { closeNeedKey(); openSettings(); });
+ui.needkeyGetkey.addEventListener('click', () => {
+  window.open('https://platform.openai.com/api-keys', '_blank', 'noopener');
+});
+
+// Initial render — sets the chip color/state based on whether a key
+// is already in localStorage from a previous visit.
+renderKeyChip();
+
 window.addEventListener('beforeunload', () => { if (active) stop(); });
 </script>
 
