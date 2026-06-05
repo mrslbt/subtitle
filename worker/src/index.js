@@ -42,12 +42,21 @@ const DONE_EVENTS = new Set([
   "session.output_transcript.done",
 ]);
 
-// Detect CJK characters (kanji + hiragana + katakana + JP punctuation).
-// Used to route input transcription deltas by the language of the text
-// rather than which upstream produced them — both upstreams transcribe
-// the same audio.
-function hasCJK(text) {
-  return /[　-鿿＀-￯]/.test(text);
+// Detect *Japanese* text specifically (not generic CJK). The translate
+// model occasionally hallucinates Korean characters; we don't want
+// those routed to the Japanese panel.
+//
+// Strategy: require at least one hiragana or katakana character (those
+// are unambiguously Japanese). If the text has only kanji + Latin
+// + Hangul, treat it as non-Japanese — Hangul belongs to Korean, and
+// pure-kanji is too ambiguous (could be Chinese) to risk false routing.
+function isJapanese(text) {
+  // Hiragana U+3040–U+309F, Katakana U+30A0–U+30FF, half-width katakana U+FF66–U+FF9F
+  return /[぀-ゟ゠-ヿｦ-ﾟ]/.test(text);
+}
+function hasHangul(text) {
+  // Hangul syllables and Jamo — strictly Korean
+  return /[가-힯ᄀ-ᇿ㄰-㆏]/.test(text);
 }
 
 // ── Entry point ────────────────────────────────────────────────────────
@@ -62,13 +71,27 @@ export default {
       return handleRealtime(req, ctx);
     }
 
-    // Everything else → static assets
-    if (env.ASSETS) {
-      // The asset bound directory contains index.html which we serve at /,
-      // js/pcm-worklet.js, etc.
-      return env.ASSETS.fetch(req);
+    if (!env.ASSETS) {
+      return new Response("Not Found", { status: 404 });
     }
-    return new Response("Not Found", { status: 404 });
+
+    // Force-disable HTML caching so updates land on iPads without
+    // having to delete the home-screen icon. JS/static assets can
+    // still cache fine.
+    const res = await env.ASSETS.fetch(req);
+    const ct = res.headers.get("content-type") || "";
+    if (ct.includes("text/html")) {
+      const headers = new Headers(res.headers);
+      headers.set("Cache-Control", "no-cache, no-store, must-revalidate");
+      headers.set("Pragma", "no-cache");
+      headers.set("Expires", "0");
+      return new Response(res.body, {
+        status: res.status,
+        statusText: res.statusText,
+        headers,
+      });
+    }
+    return res;
   },
 };
 
@@ -223,6 +246,9 @@ function setupUpstreamPump(upstream, outLang, client) {
     if (etype === "session.output_transcript.delta") {
       const text = evt.delta || evt.text || "";
       if (!text) return;
+      // Drop Korean leaks on the output side too — applies when the
+      // model accidentally translates JP → KO instead of JP → EN.
+      if (hasHangul(text)) return;
       const panel = outLang === "en" ? "left" : "right";
       safeSend(client, { type: "delta", panel, session: outLang, text });
       return;
@@ -235,7 +261,10 @@ function setupUpstreamPump(upstream, outLang, client) {
       if (outLang !== "en") return;
       const text = evt.delta || evt.text || "";
       if (!text) return;
-      const panel = hasCJK(text) ? "right" : "left";
+      // Korean leaks: model occasionally outputs Hangul. Drop those —
+      // never our intended language pair.
+      if (hasHangul(text)) return;
+      const panel = isJapanese(text) ? "right" : "left";
       safeSend(client, { type: "input_delta", panel, session: outLang, text });
       return;
     }
@@ -243,7 +272,8 @@ function setupUpstreamPump(upstream, outLang, client) {
     if (INPUT_DONE_EVENTS.has(etype)) {
       if (outLang !== "en") return;
       const text = evt.transcript || "";
-      const panel = hasCJK(text) ? "right" : "left";
+      if (hasHangul(text)) return;
+      const panel = isJapanese(text) ? "right" : "left";
       safeSend(client, { type: "input_done", panel, session: outLang, text });
       return;
     }
