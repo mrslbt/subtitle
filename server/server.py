@@ -986,28 +986,22 @@ async def translate_text_stream(payload: dict):
 # js/pcm-worklet.js handles capture + downsample + PCM16 conversion.
 # ════════════════════════════════════════════════════════════════
 
-# Map of OpenAI event type → our forwarding behavior. Anything not in
-# this map is logged and dropped (lots of housekeeping events we don't
-# need to surface to the browser).
+# Map of OpenAI event type → our forwarding behavior. The translations
+# endpoint (gpt-realtime-translate) emits session.* events for both
+# input transcription and output translation. Verified June 2026 by
+# direct probe — older docs referenced conversation.item.* and
+# response.audio_transcript.* names from the standard realtime API
+# but those do NOT fire on the translations endpoint.
 _REALTIME_DELTA_EVENTS = {
-    # Translated text streams in via these. The exact event name from
-    # the docs is "session.output_transcript.delta"; older preview
-    # builds used "response.audio_transcript.delta". We accept both.
     "session.output_transcript.delta": "delta",
-    "response.audio_transcript.delta": "delta",
-    "conversation.item.input_audio_transcription.delta": "input_delta",
+    "session.input_transcript.delta": "input_delta",
 }
 _REALTIME_DONE_EVENTS = {
     "session.output_transcript.done",
-    "response.audio_transcript.done",
-    "response.done",
 }
-# Input transcription completion — when this fires, the JP for the current
-# turn is final. Forwarded as "input_done" so the subtitle UI knows to lock
-# the Japanese line.
 _REALTIME_INPUT_DONE_EVENTS = {
-    "conversation.item.input_audio_transcription.completed",
-    "conversation.item.input_audio_transcription.done",
+    "session.input_transcript.done",
+    "session.input_transcript.completed",
 }
 
 

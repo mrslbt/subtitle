@@ -25,31 +25,29 @@ const REALTIME_URL =
 // Map of OpenAI event types → the kind we forward to the client.
 // "delta"        = a translation chunk (output language)
 // "input_delta"  = a source-language transcription chunk (input language)
+//
+// The translations endpoint (gpt-realtime-translate) uses session.*
+// events — different from the standard /v1/realtime endpoint which
+// uses conversation.item.* and response.* patterns. Verified by
+// direct probe in June 2026.
 const DELTA_EVENTS = {
   "session.output_transcript.delta": "delta",
-  "response.audio_transcript.delta": "delta",
-  "conversation.item.input_audio_transcription.delta": "input_delta",
+  "session.input_transcript.delta": "input_delta",
 };
 const INPUT_DONE_EVENTS = new Set([
-  "conversation.item.input_audio_transcription.completed",
-  "conversation.item.input_audio_transcription.done",
+  "session.input_transcript.done",
+  "session.input_transcript.completed",
 ]);
 const DONE_EVENTS = new Set([
   "session.output_transcript.done",
-  "response.audio_transcript.done",
-  "response.done",
 ]);
 
-// Language-routed panel assignment.
-//   out=en session : its translation goes LEFT (English panel)
-//                    its input transcription goes RIGHT (Japanese panel)
-//   out=ja session : its translation goes RIGHT (Japanese panel)
-//                    its input transcription goes LEFT (English panel)
-// Both panels get content on every utterance regardless of who spoke.
-function panelFor(outLang, eventKind) {
-  if (outLang === "en") return eventKind === "delta" ? "left" : "right";
-  if (outLang === "ja") return eventKind === "delta" ? "right" : "left";
-  return null;
+// Detect CJK characters (kanji + hiragana + katakana + JP punctuation).
+// Used to route input transcription deltas by the language of the text
+// rather than which upstream produced them — both upstreams transcribe
+// the same audio.
+function hasCJK(text) {
+  return /[　-鿿＀-￯]/.test(text);
 }
 
 // ── Entry point ────────────────────────────────────────────────────────
@@ -208,42 +206,61 @@ async function openUpstream(key, outputLang) {
 
 // Forward translation/transcription deltas from one upstream to the
 // client, tagged with the panel they belong to.
+//
+// Routing rules:
+//   • OUTPUT transcript (translation) → panel = upstream's output language
+//       en upstream → left panel,  ja upstream → right panel
+//   • INPUT transcript (source) → panel = language of the text itself
+//       Both upstreams emit input transcription for the same audio, so
+//       we only forward it from the EN upstream (any single source is
+//       enough) and route by language detection on the content.
 function setupUpstreamPump(upstream, outLang, client) {
   upstream.addEventListener("message", (ev) => {
     let evt;
     try { evt = JSON.parse(ev.data); } catch { return; }
     const etype = evt.type || "";
 
-    if (etype in DELTA_EVENTS) {
-      const kind = DELTA_EVENTS[etype];
-      const panel = panelFor(outLang, kind);
-      if (!panel) return;
+    if (etype === "session.output_transcript.delta") {
       const text = evt.delta || evt.text || "";
-      if (text) safeSend(client, { type: kind, panel, session: outLang, text });
+      if (!text) return;
+      const panel = outLang === "en" ? "left" : "right";
+      safeSend(client, { type: "delta", panel, session: outLang, text });
       return;
     }
+
+    if (etype === "session.input_transcript.delta") {
+      // Dedup: only the EN upstream's input transcription propagates to
+      // the client. The JA upstream's identical transcription would
+      // double-render on the same panel.
+      if (outLang !== "en") return;
+      const text = evt.delta || evt.text || "";
+      if (!text) return;
+      const panel = hasCJK(text) ? "right" : "left";
+      safeSend(client, { type: "input_delta", panel, session: outLang, text });
+      return;
+    }
+
     if (INPUT_DONE_EVENTS.has(etype)) {
-      const panel = outLang === "en" ? "right" : "left";
-      safeSend(client, {
-        type: "input_done",
-        panel,
-        session: outLang,
-        text: evt.transcript || "",
-      });
+      if (outLang !== "en") return;
+      const text = evt.transcript || "";
+      const panel = hasCJK(text) ? "right" : "left";
+      safeSend(client, { type: "input_done", panel, session: outLang, text });
       return;
     }
-    if (DONE_EVENTS.has(etype)) {
+
+    if (etype === "session.output_transcript.done") {
       const panel = outLang === "en" ? "left" : "right";
       safeSend(client, { type: "done", panel, session: outLang });
       return;
     }
+
     if (etype === "error" || etype.endsWith(".error")) {
       const msg =
         (evt.error && evt.error.message) || evt.message || "upstream error";
       safeSend(client, { type: "error", message: `${outLang}: ${msg}` });
       return;
     }
-    // session.created / session.updated and other lifecycle: ignore.
+    // session.created / session.updated / output_audio.delta etc: ignore.
   });
 
   upstream.addEventListener("close", () => {
