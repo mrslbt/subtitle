@@ -15,8 +15,12 @@
  * between this Worker and api.openai.com.
  */
 
+// Cloudflare Workers fetch() requires the https:// scheme for WebSocket
+// upgrades; it rejects wss:// even with Upgrade: websocket. The actual
+// transport is still WSS — the protocol upgrade happens after the
+// handshake.
 const REALTIME_URL =
-  "wss://api.openai.com/v1/realtime/translations?model=gpt-realtime-translate";
+  "https://api.openai.com/v1/realtime/translations?model=gpt-realtime-translate";
 
 // Map of OpenAI event types → the kind we forward to the client.
 // "delta"        = a translation chunk (output language)
@@ -175,12 +179,17 @@ async function openUpstream(key, outputLang) {
   const res = await fetch(REALTIME_URL, {
     headers: {
       "Upgrade": "websocket",
+      "Connection": "Upgrade",
+      "Sec-WebSocket-Version": "13",
+      "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
       "Authorization": `Bearer ${key}`,
+      // No OpenAI-Beta header — the Beta API was deprecated. The
+      // gpt-realtime-translate endpoint is GA at /v1/realtime/translations.
     },
   });
   if (res.status !== 101 || !res.webSocket) {
     let detail = "";
-    try { detail = (await res.text()).slice(0, 200); } catch {}
+    try { detail = (await res.text()).slice(0, 300); } catch {}
     throw new Error(`upstream ${outputLang} HTTP ${res.status} ${detail}`);
   }
   const ws = res.webSocket;
