@@ -2,6 +2,9 @@ name = "subtitle"
 main = "src/index.js"
 compatibility_date = "2025-01-15"
 compatibility_flags = ["nodejs_compat"]
+# Keep the *.workers.dev URL alive too — handy for testing without
+# DNS in the loop.
+workers_dev = true
 
 # Serve the page + AudioWorklet as static assets.
 # Any request not matched by the Worker (i.e. anything except /realtime)
@@ -11,17 +14,12 @@ compatibility_flags = ["nodejs_compat"]
 directory = "./public"
 binding = "ASSETS"
 
-# Custom domain. After `wrangler deploy`, attach subtitles.bymarsel.me
-# in the Cloudflare dashboard:
-#   Workers & Pages → subtitle → Settings → Triggers → Custom Domains
-#   → Add Custom Domain → subtitles.bymarsel.me
-# (Wrangler can also do this with a [[routes]] entry once the zone is on
-# your account, but the dashboard path is the most reliable.)
-#
-# [[routes]]
-# pattern = "subtitles.bymarsel.me/*"
-# zone_name = "bymarsel.me"
-# custom_domain = true
+# Custom domain — wrangler creates the DNS record + Worker hostname
+# binding + issues a TLS cert all from this one route entry.
+[[routes]]
+pattern = "subtitles.bymarsel.me"
+zone_name = "bymarsel.me"
+custom_domain = true
 
 # Observability — see realtime logs in `wrangler tail`
 [observability]
