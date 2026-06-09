@@ -42,21 +42,68 @@ const DONE_EVENTS = new Set([
   "session.output_transcript.done",
 ]);
 
-// Detect *Japanese* text specifically (not generic CJK). The translate
-// model occasionally hallucinates Korean characters; we don't want
-// those routed to the Japanese panel.
+// ─── Script filters (real-world hallucination defense) ────────────
+// The gpt-realtime-translate model hallucinates multilingual training
+// data when the audio signal degrades — Cyrillic, Arabic, Hebrew,
+// Tamil, Thai, Devanagari, Hangul, even YouTube subscription spam
+// in Chinese. We saw 20+ language leaks in a 90-min meeting recording.
 //
-// Strategy: require at least one hiragana or katakana character (those
-// are unambiguously Japanese). If the text has only kanji + Latin
-// + Hangul, treat it as non-Japanese — Hangul belongs to Korean, and
-// pure-kanji is too ambiguous (could be Chinese) to risk false routing.
+// Defense: reject events whose text contains characters from scripts
+// that have no business being on this panel.
+
+// Hiragana OR katakana — unambiguously Japanese. Used to confirm
+// input transcription belongs on the JP panel.
 function isJapanese(text) {
-  // Hiragana U+3040–U+309F, Katakana U+30A0–U+30FF, half-width katakana U+FF66–U+FF9F
   return /[぀-ゟ゠-ヿｦ-ﾟ]/.test(text);
 }
-function hasHangul(text) {
-  // Hangul syllables and Jamo — strictly Korean
-  return /[가-힯ᄀ-ᇿ㄰-㆏]/.test(text);
+
+// Scripts that must NEVER appear in EN translation output. If a delta
+// contains any character from these ranges, the whole event is dropped
+// — these are always hallucinations on the EN panel.
+//   Greek, Cyrillic, Armenian, Hebrew, Arabic, Devanagari, Tamil,
+//   Thai, CJK (kanji+kana+punct), Hangul, full-width forms
+const EN_FORBIDDEN_RE = new RegExp(
+  '[' +
+  'Ͱ-Ͽ' + // Greek
+  'Ѐ-ӿ' + // Cyrillic
+  '԰-֏' + // Armenian
+  '֐-׿' + // Hebrew
+  '؀-ۿ' + // Arabic
+  'ݐ-ݿ' + // Arabic supplement
+  'ऀ-ॿ' + // Devanagari
+  '஀-௿' + // Tamil
+  '฀-๿' + // Thai
+  '　-鿿' + // CJK punct + kana + kanji
+  '가-힯' + // Hangul syllables
+  '＀-￯' + // half/fullwidth (incl. CJK)
+  ']'
+);
+function isCleanEn(text) {
+  return !EN_FORBIDDEN_RE.test(text);
+}
+
+// Scripts that must NEVER appear in JP transcription/translation.
+// Kanji (CJK Unified) and JP punctuation are OK — kana even better.
+// Latin is allowed because real JP often embeds short English words
+// like "OK", "AI", brand names.
+const JP_FORBIDDEN_RE = new RegExp(
+  '[' +
+  'Ͱ-Ͽ' + // Greek
+  'Ѐ-ӿ' + // Cyrillic
+  '԰-֏' + // Armenian
+  '֐-׿' + // Hebrew
+  '؀-ۿ' + // Arabic
+  'ݐ-ݿ' + // Arabic supplement
+  'ऀ-ॿ' + // Devanagari
+  '஀-௿' + // Tamil
+  '฀-๿' + // Thai
+  '가-힯' + // Hangul syllables
+  'ᄀ-ᇿ' + // Hangul Jamo
+  '㄰-㆏' + // Hangul compatibility Jamo
+  ']'
+);
+function isCleanJp(text) {
+  return !JP_FORBIDDEN_RE.test(text);
 }
 
 // ── Entry point ────────────────────────────────────────────────────────
@@ -246,10 +293,11 @@ function setupUpstreamPump(upstream, outLang, client) {
     if (etype === "session.output_transcript.delta") {
       const text = evt.delta || evt.text || "";
       if (!text) return;
-      // Drop Korean leaks on the output side too — applies when the
-      // model accidentally translates JP → KO instead of JP → EN.
-      if (hasHangul(text)) return;
       const panel = outLang === "en" ? "left" : "right";
+      // Script filter: model hallucinates multilingual fragments when
+      // audio degrades. Drop anything that doesn't belong on this panel.
+      if (panel === "left" && !isCleanEn(text)) return;
+      if (panel === "right" && !isCleanJp(text)) return;
       safeSend(client, { type: "delta", panel, session: outLang, text });
       return;
     }
@@ -261,10 +309,10 @@ function setupUpstreamPump(upstream, outLang, client) {
       if (outLang !== "en") return;
       const text = evt.delta || evt.text || "";
       if (!text) return;
-      // Korean leaks: model occasionally outputs Hangul. Drop those —
-      // never our intended language pair.
-      if (hasHangul(text)) return;
       const panel = isJapanese(text) ? "right" : "left";
+      // Script filter — same rules as output.
+      if (panel === "left" && !isCleanEn(text)) return;
+      if (panel === "right" && !isCleanJp(text)) return;
       safeSend(client, { type: "input_delta", panel, session: outLang, text });
       return;
     }
@@ -272,8 +320,10 @@ function setupUpstreamPump(upstream, outLang, client) {
     if (INPUT_DONE_EVENTS.has(etype)) {
       if (outLang !== "en") return;
       const text = evt.transcript || "";
-      if (hasHangul(text)) return;
+      if (!text) return;
       const panel = isJapanese(text) ? "right" : "left";
+      if (panel === "left" && !isCleanEn(text)) return;
+      if (panel === "right" && !isCleanJp(text)) return;
       safeSend(client, { type: "input_done", panel, session: outLang, text });
       return;
     }
