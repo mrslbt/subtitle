@@ -129,6 +129,20 @@ Result: every utterance fills both panels. The Japanese speaker reads CH B for t
 | Transport | JSON over WebSocket | client → server → OpenAI |
 | Fan-out | identical frames to both upstreams | server |
 
+## Known issues
+
+The `gpt-realtime-translate` model is great when the input audio is clean and mid-volume. When the signal degrades (quiet talker, background noise, mic distance, talker walking away) it hallucinates — falling back to plausible-sounding training data, which is multilingual.
+
+What you'll see in practice:
+
+- **Multilingual fragments leak into the EN translation column.** Cyrillic, Arabic, Hebrew, Tamil, Hangul, CJK, even literal Mandarin YouTube subscription begs that the model memorized in training. The Worker now strips these via script filters — any delta containing characters from non-Latin scripts gets dropped on the EN panel.
+- **Pure-Latin European leaks still get through.** Occasional Turkish, French, Swedish, Portuguese, Czech fragments. They share the Latin alphabet with English, so blocking them would also block real English with accented characters ("résumé", "café").
+- **Doubled Japanese sentences.** Mid-utterance retranscriptions concatenate instead of replacing, producing strings like `だから二つの商品がそ2つ商品が募ってる`. Dedup not yet implemented.
+- **Single-word fragment commits.** "Bye", "Yeah", "Thank you" sometimes appear as standalone utterances. The 2.5s silence-finalize timer is too aggressive on these.
+- **Stage directions leak.** Occasional "Cough", "laughs", "Bye." appearing as English text — the audio model treating sounds as transcript metadata.
+
+Most of these get materially better with client-side VAD (only forward PCM frames when speech is actually present, not silence) — that's the next planned change.
+
 ## Privacy
 
 Audio leaves your machine only to OpenAI, only on your own API key. The server doesn't log audio. There's no analytics, no telemetry, no account. The Markdown export is a download. It never round-trips through any server.
