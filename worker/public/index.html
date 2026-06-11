@@ -676,12 +676,13 @@ button {
 <main>
   <section class="col" id="col-left">
     <div class="col-head">
-      <span class="channel"><span class="ch-letter">A</span>CHANNEL · ENGLISH</span>
-      <span class="lang">EN</span>
+      <span class="channel"><span class="ch-letter">A</span>JP → EN</span>
+      <span class="lang">日本語 → English</span>
     </div>
     <div class="history" id="hist-left"></div>
     <div class="current" id="cur-left">
-      <div class="text"></div>
+      <div class="src"></div>
+      <div class="tr"></div>
     </div>
   </section>
 
@@ -689,12 +690,13 @@ button {
 
   <section class="col" id="col-right">
     <div class="col-head">
-      <span class="channel"><span class="ch-letter">B</span>CHANNEL · 日本語</span>
-      <span class="lang">JP</span>
+      <span class="channel"><span class="ch-letter">B</span>EN → JP</span>
+      <span class="lang">English → 日本語</span>
     </div>
     <div class="history" id="hist-right"></div>
     <div class="current" id="cur-right">
-      <div class="text"></div>
+      <div class="src"></div>
+      <div class="tr"></div>
     </div>
   </section>
 
@@ -798,20 +800,30 @@ const ui = {
   needkeyGetkey: $('needkey-getkey'),
 };
 const panels = {
-  left:  { hist: $('hist-left'),  cur: $('cur-left'),  text: $('cur-left').querySelector('.text')  },
-  right: { hist: $('hist-right'), cur: $('cur-right'), text: $('cur-right').querySelector('.text') },
+  left:  {
+    hist: $('hist-left'),  cur: $('cur-left'),
+    srcEl: $('cur-left').querySelector('.src'),
+    trEl:  $('cur-left').querySelector('.tr'),
+  },
+  right: {
+    hist: $('hist-right'), cur: $('cur-right'),
+    srcEl: $('cur-right').querySelector('.src'),
+    trEl:  $('cur-right').querySelector('.tr'),
+  },
 };
 
 let ctx = null, stream = null, workletNode = null, ws = null;
 let active = false, sessionStart = 0, elapsedTimer = null;
 
-// Per-panel accumulating state. We keep a buffer of streamed text and
-// repeatedly try to peel off completed sentences from the front.
+// Per-panel state. Each panel = one DIRECTION of translation, so we
+// track both a source buffer (the spoken language) and a translation
+// buffer (the rendered language). Source streams in as the speaker
+// talks; translation streams in once the utterance completes.
 const cur = {
-  left:  { buf: '', ts: null, lastDeltaAt: 0, session: null },
-  right: { buf: '', ts: null, lastDeltaAt: 0, session: null },
+  left:  { src: '', tr: '', ts: null, lastDeltaAt: 0 },
+  right: { src: '', tr: '', ts: null, lastDeltaAt: 0 },
 };
-// History across panels — used for export. Each entry: {ts, panel, text, session}
+// History across panels — used for export. Each entry: {ts, panel, src, tr}
 const history = [];
 
 // Silence-timer that finalizes lingering text 2.5s after the last delta,
@@ -912,55 +924,31 @@ function setRecording(on) {
   ui.recLabel.textContent = on ? 'ON' : 'OFF';
 }
 
-// ── Sentence-boundary detection ───────────────────────────────────────
-// JP terminal punctuation is unambiguous: 。 ！ ？ …
-// EN is trickier (abbreviations) — we require a SPACE after the
-// terminator or end-of-string; that filters "Dr. Smith" and "U.S.A."
-const RE_SENTENCE_JP = /([^。！？…]+[。！？…]+)/;
-const RE_SENTENCE_EN = /([^.!?]+[.!?]+)(?=\s|$)/;
-
-// Peel one finalized sentence off the front of a panel's buffer.
-// Returns true if it finalized something (caller should loop).
-function trySplitSentence(panel) {
-  const buf = cur[panel].buf;
-  if (!buf) return false;
-
-  const re = panel === 'left' ? RE_SENTENCE_EN : RE_SENTENCE_JP;
-  const m = buf.match(re);
-  if (!m) return false;
-
-  // Take the matched sentence verbatim. For EN we used a lookahead so
-  // the match doesn't include the trailing space; for JP we include
-  // the punctuation itself.
-  const sentence = m[1].trim();
-  const consumed = m.index + m[1].length;
-  // For EN: skip the single whitespace after the punctuation
-  let rest = buf.slice(consumed);
-  if (panel === 'left') rest = rest.replace(/^\s+/, '');
-
-  if (!sentence) return false;
-
-  finalizeEntry(panel, sentence);
-  cur[panel].buf = rest;
-  cur[panel].ts = rest ? cur[panel].ts : null;
-  renderCurrent(panel);
-  return true;
-}
-
-function finalizeEntry(panel, text) {
-  if (!text) return;
+function finalizeEntry(panel, srcText, trText) {
+  const src = (srcText || '').trim();
+  const tr = (trText || '').trim();
+  if (!src && !tr) return;
   const ts = cur[panel].ts || new Date().toISOString();
-  history.push({ ts, panel, text, session: cur[panel].session });
+  history.push({ ts, panel, src, tr });
 
   const el = document.createElement('div');
   el.className = 'entry';
   const tsEl = document.createElement('div');
   tsEl.className = 'ts';
   tsEl.textContent = fmtClockTime(new Date(ts));
-  const bodyEl = document.createElement('div');
-  bodyEl.className = 'body';
-  bodyEl.textContent = text;
-  el.append(tsEl, bodyEl);
+  el.appendChild(tsEl);
+  if (src) {
+    const srcEl = document.createElement('div');
+    srcEl.className = 'src-line';
+    srcEl.textContent = src;
+    el.appendChild(srcEl);
+  }
+  if (tr) {
+    const trEl = document.createElement('div');
+    trEl.className = 'tr-line';
+    trEl.textContent = tr;
+    el.appendChild(trEl);
+  }
   panels[panel].hist.appendChild(el);
   panels[panel].hist.scrollTop = panels[panel].hist.scrollHeight;
 
@@ -970,28 +958,23 @@ function finalizeEntry(panel, text) {
 
 function renderCurrent(panel) {
   const p = panels[panel];
-  const txt = cur[panel].buf;
-  p.text.textContent = txt;
-  p.cur.classList.toggle('streaming', !!txt);
-}
-
-// Greedy splitter — peels off as many full sentences as it can.
-function flushSentences(panel) {
-  let n = 0;
-  while (n < 8 && trySplitSentence(panel)) n++;
+  const c = cur[panel];
+  p.srcEl.textContent = c.src;
+  p.trEl.textContent = c.tr;
+  p.cur.classList.toggle('streaming', !!(c.src || c.tr));
 }
 
 // Silence-timer: if a panel has unfinalized text and no new deltas
-// for SILENCE_FINALIZE_MS, commit whatever's there as a finished line.
+// for SILENCE_FINALIZE_MS, commit whatever's there as a finished pair.
 function startSilenceTicker() {
   stopSilenceTicker();
   silenceTicker = setInterval(() => {
     const now = performance.now();
     for (const p of ['left','right']) {
       const c = cur[p];
-      if (c.buf && c.lastDeltaAt && (now - c.lastDeltaAt) > SILENCE_FINALIZE_MS) {
-        finalizeEntry(p, c.buf.trim());
-        c.buf = ''; c.ts = null; c.lastDeltaAt = 0;
+      if ((c.src || c.tr) && c.lastDeltaAt && (now - c.lastDeltaAt) > SILENCE_FINALIZE_MS) {
+        finalizeEntry(p, c.src, c.tr);
+        c.src = ''; c.tr = ''; c.ts = null; c.lastDeltaAt = 0;
         renderCurrent(p);
       }
     }
@@ -1013,31 +996,35 @@ function onWsMessage(ev) {
   const panel = msg.panel;
   if (!panel || !cur[panel]) return;
 
-  if (t === 'delta' || t === 'input_delta') {
+  // Each panel = one DIRECTION of translation:
+  //   LEFT panel = JP→EN  (input_delta is JP source, delta is EN translation)
+  //   RIGHT panel = EN→JP (input_delta is EN source, delta is JP translation)
+  // Both event types land on the same panel, but on different lines
+  // (src above, tr below).
+  if (t === 'input_delta') {
     if (!cur[panel].ts) cur[panel].ts = new Date().toISOString();
-    cur[panel].session = msg.session || cur[panel].session;
-    cur[panel].buf += msg.text || '';
+    cur[panel].src += msg.text || '';
     cur[panel].lastDeltaAt = performance.now();
     renderCurrent(panel);
-    flushSentences(panel);
+    return;
+  }
+  if (t === 'delta') {
+    if (!cur[panel].ts) cur[panel].ts = new Date().toISOString();
+    cur[panel].tr += msg.text || '';
+    cur[panel].lastDeltaAt = performance.now();
+    renderCurrent(panel);
     return;
   }
   if (t === 'input_done') {
-    // If the server attached a complete transcript, prefer it (catches
-    // any deltas we missed during ws reconnects).
-    if (msg.text) cur[panel].buf = msg.text;
+    if (msg.text) cur[panel].src = msg.text;
     renderCurrent(panel);
-    flushSentences(panel);
     return;
   }
   if (t === 'done') {
-    // Output turn ended — flush whatever's left.
-    flushSentences(panel);
-    if (cur[panel].buf.trim()) {
-      finalizeEntry(panel, cur[panel].buf.trim());
-      cur[panel].buf = ''; cur[panel].ts = null; cur[panel].lastDeltaAt = 0;
-      renderCurrent(panel);
-    }
+    // Translation streamed end → commit the whole pair to history.
+    finalizeEntry(panel, cur[panel].src, cur[panel].tr);
+    cur[panel] = { src: '', tr: '', ts: null, lastDeltaAt: 0 };
+    renderCurrent(panel);
     return;
   }
 }
@@ -1067,7 +1054,7 @@ async function start() {
   history.length = 0;
   ui.count.innerHTML = `<strong>0</strong>LINES`;
   for (const k of ['left','right']) {
-    cur[k] = { buf: '', ts: null, lastDeltaAt: 0, session: null };
+    cur[k] = { src: '', tr: '', ts: null, lastDeltaAt: 0 };
     panels[k].hist.innerHTML = '';
     renderCurrent(k);
   }
@@ -1155,11 +1142,11 @@ function stop() {
   if (elapsedTimer) { clearInterval(elapsedTimer); elapsedTimer = null; }
   stopSilenceTicker();
 
-  // Commit any in-flight text before tearing down
+  // Commit any in-flight pair before tearing down
   for (const p of ['left','right']) {
-    if (cur[p].buf.trim()) {
-      finalizeEntry(p, cur[p].buf.trim());
-      cur[p] = { buf: '', ts: null, lastDeltaAt: 0, session: null };
+    if (cur[p].src || cur[p].tr) {
+      finalizeEntry(p, cur[p].src, cur[p].tr);
+      cur[p] = { src: '', tr: '', ts: null, lastDeltaAt: 0 };
       renderCurrent(p);
     }
   }
@@ -1185,36 +1172,23 @@ function exportMd() {
   const startedAt = new Date(sorted[0].ts);
   const stamp = startedAt.toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
 
-  // Pair adjacent entries from the same session that arrived within
-  // 1500ms — those are the same utterance, different language.
-  const pairs = [];
-  for (let i = 0; i < sorted.length; i++) {
-    const e = sorted[i];
-    const prev = pairs[pairs.length - 1];
-    if (prev &&
-        prev.session && e.session && prev.session === e.session &&
-        (new Date(e.ts) - new Date(prev.ts)) < 1500 &&
-        !prev[e.panel]) {
-      prev[e.panel] = e.text;
-      continue;
-    }
-    pairs.push({ ts: e.ts, session: e.session, [e.panel]: e.text });
-  }
-
+  // Each history entry already IS a direction-pair (src+tr on one panel).
+  // We just sort chronologically and tag each utterance with its direction.
   const out = [
-    `# earpiece transcript`,
+    `# subtitle transcript`,
     ``,
     `**Started** ${startedAt.toLocaleString()}`,
-    `**Lines** ${history.length} (${pairs.length} utterances)`,
+    `**Utterances** ${sorted.length}`,
     ``,
     `---`,
     ``,
   ];
-  for (const p of pairs) {
-    const time = fmtClockTime(new Date(p.ts));
-    out.push(`**${time}**`);
-    if (p.left)  out.push(`- EN — ${p.left}`);
-    if (p.right) out.push(`- JP — ${p.right}`);
+  for (const e of sorted) {
+    const time = fmtClockTime(new Date(e.ts));
+    const arrow = e.panel === 'left' ? 'JP → EN' : 'EN → JP';
+    out.push(`**${time}** · ${arrow}`);
+    if (e.src) out.push(`- ${e.panel === 'left' ? 'JP' : 'EN'} — ${e.src}`);
+    if (e.tr)  out.push(`- ${e.panel === 'left' ? 'EN' : 'JP'} — ${e.tr}`);
     out.push(``);
   }
 

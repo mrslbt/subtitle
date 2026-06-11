@@ -252,11 +252,29 @@ async function openTranscriptionSession(key) {
 
 // Forward transcription events from upstream → client, and trigger
 // translation when each utterance completes.
+//
+// PANEL MODEL: each panel represents a DIRECTION of translation, not
+// a language. LEFT = "JP was spoken, here's the EN" pair. RIGHT = "EN
+// was spoken, here's the JP" pair.
+//
+// Direction detection has three priorities:
+//   1. Hiragana/katakana present → LEFT (definitely Japanese)
+//   2. Latin letters present → RIGHT (English)
+//   3. Neither (bare digits, kanji-only, punctuation) → inherit from
+//      previous utterance's direction. The VAD chops "午後三時" into
+//      a separate "3" item; without sticky direction those leak.
+function pickDirection(text, fallback) {
+  if (/[぀-ゟ゠-ヿｦ-ﾟ]/.test(text)) return "left";   // hiragana/katakana
+  if (/[A-Za-z]/.test(text)) return "right";          // Latin letters
+  return fallback;
+}
+
 function pumpUpstream(upstream, client, key) {
-  // Track which panel the current in-flight utterance is routed to,
-  // so we don't accidentally split a single utterance across panels
-  // if the model emits a Latin-looking first delta followed by JP.
+  // Sticky panel for the in-flight utterance.
   let currentPanel = null;
+  // Session-wide last detected direction. Defaults to LEFT (JP) since
+  // Marsel's meetings are 95%+ Japanese.
+  let lastDirection = "left";
 
   upstream.addEventListener("message", (ev) => {
     let evt;
@@ -266,14 +284,13 @@ function pumpUpstream(upstream, client, key) {
     if (t === "conversation.item.input_audio_transcription.delta") {
       const text = evt.delta || "";
       if (!text) return;
-      // Decide panel from the first non-empty delta of the utterance.
-      // Sticky until the utterance completes.
       if (!currentPanel) {
-        currentPanel = isJapanese(text) ? "right" : "left";
+        currentPanel = pickDirection(text, lastDirection);
       }
       // Script filter — drop multilingual hallucination fragments.
-      if (currentPanel === "left" && !isCleanEn(text)) return;
-      if (currentPanel === "right" && !isCleanJp(text)) return;
+      const sourceClean =
+        currentPanel === "left" ? isCleanJp(text) : isCleanEn(text);
+      if (!sourceClean) return;
       safeSend(client, { type: "input_delta", panel: currentPanel, text });
       return;
     }
@@ -284,28 +301,29 @@ function pumpUpstream(upstream, client, key) {
         currentPanel = null;
         return;
       }
-      // Re-detect on the full transcript (more reliable than first delta).
-      const sourcePanel = isJapanese(transcript) ? "right" : "left";
-      const targetPanel = sourcePanel === "right" ? "left" : "right";
-      const targetLang = sourcePanel === "right" ? "English" : "Japanese";
+      // Re-detect on the full transcript. Ambiguous (digits / pure
+      // kanji / punctuation) inherits the last known direction.
+      const panel = pickDirection(transcript, lastDirection);
+      lastDirection = panel;
+      const targetLang = panel === "left" ? "English" : "Japanese";
 
-      // Final check on source — drop if it's somehow not in our scripts.
-      const sourceOk =
-        sourcePanel === "left" ? isCleanEn(transcript) : isCleanJp(transcript);
-      if (!sourceOk) {
+      // Final source script check.
+      const sourceClean =
+        panel === "left" ? isCleanJp(transcript) : isCleanEn(transcript);
+      if (!sourceClean) {
         currentPanel = null;
         return;
       }
 
       safeSend(client, {
         type: "input_done",
-        panel: sourcePanel,
+        panel,
         text: transcript,
       });
 
-      // Fire translation in the background. Don't await — the next
-      // utterance might already be streaming in.
-      translateAndStream(key, transcript, targetLang, targetPanel, client)
+      // Translation streams to the SAME panel (the translation line
+      // sits under the source line within one direction-pair).
+      translateAndStream(key, transcript, targetLang, panel, client)
         .catch((e) => {
           safeSend(client, {
             type: "error",
@@ -385,7 +403,10 @@ async function translateAndStream(key, text, targetLang, panel, client) {
       try { parsed = JSON.parse(payload); } catch { continue; }
       const delta = parsed?.choices?.[0]?.delta?.content;
       if (!delta) continue;
-      // Script filter on translation output too.
+      // Script filter on translation output too. Note the swapped
+      // language check: LEFT panel = JP→EN, so the TRANSLATION here
+      // must be clean English. RIGHT panel = EN→JP, so the translation
+      // must be clean Japanese.
       if (panel === "left" && !isCleanEn(delta)) continue;
       if (panel === "right" && !isCleanJp(delta)) continue;
       safeSend(client, { type: "delta", panel, text: delta });
