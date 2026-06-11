@@ -1,112 +1,97 @@
 /**
- * Subtitle — Cloudflare Worker
+ * Subtitle — Cloudflare Worker (transcribe + translate split)
+ *
+ * Architecture:
+ *   browser  ─── ws ─── Worker  ─── ws ─── gpt-4o-transcribe
+ *                          │
+ *                          └── chat/completions ── gpt-4o-mini (translate)
+ *
+ * One upstream WebSocket to OpenAI's transcription endpoint runs
+ * continuously. Server-side VAD handles speech-boundary detection.
+ * Streaming transcription deltas land on whichever panel matches the
+ * detected language. When an utterance completes, a chat-completions
+ * call fires in parallel, streaming the translation chunks back to
+ * the opposite panel.
+ *
+ * Compared to the old dual-session approach:
+ *   • ~10× cheaper ($0.006/min audio vs $0.068/min dual)
+ *   • Less hallucination (transcription model doesn't randomly drift
+ *     into multilingual training data on poor signal)
+ *   • Bidirectional preserved (auto language detection routes by content)
+ *   • Translation quality matches gpt-4o-mini chat (very good)
  *
  * Routes:
- *   GET  /realtime  — WebSocket upgrade. Proxies a browser session to
- *                     two parallel gpt-realtime-translate upstreams
- *                     (one EN-out, one JP-out) using the client's own
- *                     OpenAI key (BYOK). First client message must be
- *                     {type:"auth", key:"sk-..."}; without it we close.
- *   *               — falls through to static assets bound as env.ASSETS
- *                     (index.html, js/pcm-worklet.js, …).
+ *   GET  /realtime  — WebSocket upgrade. Client must send
+ *                     {type:"auth", key:"sk-..."} as the first message.
+ *   *               — falls through to static assets bound as env.ASSETS.
  *
- * The key never gets logged. It exists only in this Worker invocation's
- * memory for the duration of the WebSocket session and on the wire
- * between this Worker and api.openai.com.
+ * Client event shape (unchanged from prior versions for compatibility):
+ *   server → {type:"ready"}
+ *   server → {type:"input_delta",  panel, text}   — live transcript chunk
+ *   server → {type:"input_done",   panel, text}   — transcript final
+ *   server → {type:"delta",        panel, text}   — translation chunk
+ *   server → {type:"done",         panel}         — translation final
+ *   server → {type:"error",        message}
+ *   client → {type:"audio",        data}          — base64 24kHz PCM16
  */
 
-// Cloudflare Workers fetch() requires the https:// scheme for WebSocket
-// upgrades; it rejects wss:// even with Upgrade: websocket. The actual
-// transport is still WSS — the protocol upgrade happens after the
-// handshake.
-const REALTIME_URL =
-  "https://api.openai.com/v1/realtime/translations?model=gpt-realtime-translate";
+const TRANSCRIPTION_URL =
+  "https://api.openai.com/v1/realtime?intent=transcription";
+const CHAT_URL = "https://api.openai.com/v1/chat/completions";
+const TRANSCRIBE_MODEL = "gpt-4o-transcribe";
+const TRANSLATE_MODEL = "gpt-4o-mini";
 
-// Map of OpenAI event types → the kind we forward to the client.
-// "delta"        = a translation chunk (output language)
-// "input_delta"  = a source-language transcription chunk (input language)
-//
-// The translations endpoint (gpt-realtime-translate) uses session.*
-// events — different from the standard /v1/realtime endpoint which
-// uses conversation.item.* and response.* patterns. Verified by
-// direct probe in June 2026.
-const DELTA_EVENTS = {
-  "session.output_transcript.delta": "delta",
-  "session.input_transcript.delta": "input_delta",
-};
-const INPUT_DONE_EVENTS = new Set([
-  "session.input_transcript.done",
-  "session.input_transcript.completed",
-]);
-const DONE_EVENTS = new Set([
-  "session.output_transcript.done",
-]);
+// ─── Script detectors / filters ────────────────────────────────────
+// Real-world: the model occasionally hallucinates multilingual training
+// data when the audio signal degrades. We reject anything whose script
+// doesn't belong on its panel.
 
-// ─── Script filters (real-world hallucination defense) ────────────
-// The gpt-realtime-translate model hallucinates multilingual training
-// data when the audio signal degrades — Cyrillic, Arabic, Hebrew,
-// Tamil, Thai, Devanagari, Hangul, even YouTube subscription spam
-// in Chinese. We saw 20+ language leaks in a 90-min meeting recording.
-//
-// Defense: reject events whose text contains characters from scripts
-// that have no business being on this panel.
-
-// Hiragana OR katakana — unambiguously Japanese. Used to confirm
-// input transcription belongs on the JP panel.
+// Hiragana OR katakana — unambiguously Japanese.
 function isJapanese(text) {
   return /[぀-ゟ゠-ヿｦ-ﾟ]/.test(text);
 }
 
-// Scripts that must NEVER appear in EN translation output. If a delta
-// contains any character from these ranges, the whole event is dropped
-// — these are always hallucinations on the EN panel.
-//   Greek, Cyrillic, Armenian, Hebrew, Arabic, Devanagari, Tamil,
-//   Thai, CJK (kanji+kana+punct), Hangul, full-width forms
 const EN_FORBIDDEN_RE = new RegExp(
-  '[' +
-  'Ͱ-Ͽ' + // Greek
-  'Ѐ-ӿ' + // Cyrillic
-  '԰-֏' + // Armenian
-  '֐-׿' + // Hebrew
-  '؀-ۿ' + // Arabic
-  'ݐ-ݿ' + // Arabic supplement
-  'ऀ-ॿ' + // Devanagari
-  '஀-௿' + // Tamil
-  '฀-๿' + // Thai
-  '　-鿿' + // CJK punct + kana + kanji
-  '가-힯' + // Hangul syllables
-  '＀-￯' + // half/fullwidth (incl. CJK)
-  ']'
+  "[" +
+    "Ͱ-Ͽ" + // Greek
+    "Ѐ-ӿ" + // Cyrillic
+    "԰-֏" + // Armenian
+    "֐-׿" + // Hebrew
+    "؀-ۿ" + // Arabic
+    "ݐ-ݿ" + // Arabic supplement
+    "ऀ-ॿ" + // Devanagari
+    "஀-௿" + // Tamil
+    "฀-๿" + // Thai
+    "　-鿿" + // CJK punct + kana + kanji
+    "가-힯" + // Hangul syllables
+    "＀-￯" + // half/fullwidth
+    "]"
 );
 function isCleanEn(text) {
   return !EN_FORBIDDEN_RE.test(text);
 }
 
-// Scripts that must NEVER appear in JP transcription/translation.
-// Kanji (CJK Unified) and JP punctuation are OK — kana even better.
-// Latin is allowed because real JP often embeds short English words
-// like "OK", "AI", brand names.
 const JP_FORBIDDEN_RE = new RegExp(
-  '[' +
-  'Ͱ-Ͽ' + // Greek
-  'Ѐ-ӿ' + // Cyrillic
-  '԰-֏' + // Armenian
-  '֐-׿' + // Hebrew
-  '؀-ۿ' + // Arabic
-  'ݐ-ݿ' + // Arabic supplement
-  'ऀ-ॿ' + // Devanagari
-  '஀-௿' + // Tamil
-  '฀-๿' + // Thai
-  '가-힯' + // Hangul syllables
-  'ᄀ-ᇿ' + // Hangul Jamo
-  '㄰-㆏' + // Hangul compatibility Jamo
-  ']'
+  "[" +
+    "Ͱ-Ͽ" +
+    "Ѐ-ӿ" +
+    "԰-֏" +
+    "֐-׿" +
+    "؀-ۿ" +
+    "ݐ-ݿ" +
+    "ऀ-ॿ" +
+    "஀-௿" +
+    "฀-๿" +
+    "가-힯" +
+    "ᄀ-ᇿ" +
+    "㄰-㆏" +
+    "]"
 );
 function isCleanJp(text) {
   return !JP_FORBIDDEN_RE.test(text);
 }
 
-// ── Entry point ────────────────────────────────────────────────────────
+// ─── Worker entrypoint ──────────────────────────────────────────────
 export default {
   async fetch(req, env, ctx) {
     const url = new URL(req.url);
@@ -123,8 +108,7 @@ export default {
     }
 
     // Force-disable HTML caching so updates land on iPads without
-    // having to delete the home-screen icon. JS/static assets can
-    // still cache fine.
+    // having to delete the home-screen icon.
     const res = await env.ASSETS.fetch(req);
     const ct = res.headers.get("content-type") || "";
     if (ct.includes("text/html")) {
@@ -142,26 +126,21 @@ export default {
   },
 };
 
-// ── WebSocket upgrade handler ──────────────────────────────────────────
 function handleRealtime(req, ctx) {
   const pair = new WebSocketPair();
   const client = pair[0];
   const server = pair[1];
   server.accept();
-
-  // Run the session in the background; ctx.waitUntil keeps the Worker
-  // alive until the session completes.
   ctx.waitUntil(runSession(server).catch((e) => console.error("session:", e)));
-
   return new Response(null, { status: 101, webSocket: client });
 }
 
-// ── Per-session orchestration ──────────────────────────────────────────
+// ─── Per-session orchestration ─────────────────────────────────────
 async function runSession(client) {
   let key;
   try {
     key = await waitForAuth(client);
-  } catch (e) {
+  } catch {
     safeSend(client, { type: "error", message: "auth timeout" });
     safeClose(client, 1008, "auth timeout");
     return;
@@ -172,54 +151,43 @@ async function runSession(client) {
     return;
   }
 
-  let enUp, jaUp;
+  let upstream;
   try {
-    [enUp, jaUp] = await Promise.all([
-      openUpstream(key, "en"),
-      openUpstream(key, "ja"),
-    ]);
+    upstream = await openTranscriptionSession(key);
   } catch (e) {
-    const msg = e && e.message ? e.message : "upstream connect failed";
+    const msg = (e && e.message) || "upstream connect failed";
     safeSend(client, { type: "error", message: msg });
     safeClose(client, 1011, "upstream failed");
     return;
   }
 
   safeSend(client, { type: "ready" });
+  pumpUpstream(upstream, client, key);
 
-  setupUpstreamPump(enUp, "en", client);
-  setupUpstreamPump(jaUp, "ja", client);
-
-  // Pump browser → both upstreams. Audio frames are forwarded to both.
   client.addEventListener("message", (ev) => {
     let msg;
     try { msg = JSON.parse(ev.data); } catch { return; }
-
     if (msg.type === "audio" && msg.data) {
-      const payload = JSON.stringify({
-        type: "session.input_audio_buffer.append",
-        audio: msg.data,
-      });
-      try { enUp.send(payload); } catch {}
-      try { jaUp.send(payload); } catch {}
+      try {
+        upstream.send(JSON.stringify({
+          type: "input_audio_buffer.append",
+          audio: msg.data,
+        }));
+      } catch {}
     } else if (msg.type === "ping") {
       safeSend(client, { type: "pong" });
     }
-    // Ignore auth messages after the first (already handled).
   });
 
-  const closeAll = () => {
-    safeClose(enUp);
-    safeClose(jaUp);
+  const close = () => {
+    safeClose(upstream);
     safeClose(client);
   };
-  client.addEventListener("close", closeAll);
-  client.addEventListener("error", closeAll);
+  client.addEventListener("close", close);
+  client.addEventListener("error", close);
 }
 
-// Wait for the first client message and resolve with the key if it's an
-// auth frame. Rejects on timeout (10s). Resolves with null if a message
-// arrives but it's not a valid auth frame.
+// Wait for the first client message and resolve with the OpenAI key.
 function waitForAuth(client) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("auth timeout")), 10000);
@@ -241,117 +209,192 @@ function waitForAuth(client) {
   });
 }
 
-// Open one upstream WebSocket to gpt-realtime-translate. outputLang =
-// "en" or "ja". Sends the session.update before returning.
-async function openUpstream(key, outputLang) {
-  const res = await fetch(REALTIME_URL, {
+async function openTranscriptionSession(key) {
+  const res = await fetch(TRANSCRIPTION_URL, {
     headers: {
       "Upgrade": "websocket",
       "Connection": "Upgrade",
       "Sec-WebSocket-Version": "13",
       "Sec-WebSocket-Key": "dGhlIHNhbXBsZSBub25jZQ==",
       "Authorization": `Bearer ${key}`,
-      // No OpenAI-Beta header — the Beta API was deprecated. The
-      // gpt-realtime-translate endpoint is GA at /v1/realtime/translations.
     },
   });
   if (res.status !== 101 || !res.webSocket) {
     let detail = "";
     try { detail = (await res.text()).slice(0, 300); } catch {}
-    throw new Error(`upstream ${outputLang} HTTP ${res.status} ${detail}`);
+    throw new Error(`upstream HTTP ${res.status} ${detail}`);
   }
   const ws = res.webSocket;
   ws.accept();
+  // Configure transcription session — gpt-4o-transcribe with server VAD.
+  // silence_duration_ms=700 gives a more natural utterance boundary than
+  // the default 200 (which cuts mid-sentence on natural JP thinking pauses).
   ws.send(JSON.stringify({
     type: "session.update",
     session: {
+      type: "transcription",
       audio: {
-        input: { transcription: { model: "whisper-1" } },
-        output: { language: outputLang },
+        input: {
+          format: { type: "audio/pcm", rate: 24000 },
+          transcription: { model: TRANSCRIBE_MODEL },
+          turn_detection: {
+            type: "server_vad",
+            threshold: 0.5,
+            prefix_padding_ms: 300,
+            silence_duration_ms: 700,
+          },
+        },
       },
     },
   }));
   return ws;
 }
 
-// Forward translation/transcription deltas from one upstream to the
-// client, tagged with the panel they belong to.
-//
-// Routing rules:
-//   • OUTPUT transcript (translation) → panel = upstream's output language
-//       en upstream → left panel,  ja upstream → right panel
-//   • INPUT transcript (source) → panel = language of the text itself
-//       Both upstreams emit input transcription for the same audio, so
-//       we only forward it from the EN upstream (any single source is
-//       enough) and route by language detection on the content.
-function setupUpstreamPump(upstream, outLang, client) {
+// Forward transcription events from upstream → client, and trigger
+// translation when each utterance completes.
+function pumpUpstream(upstream, client, key) {
+  // Track which panel the current in-flight utterance is routed to,
+  // so we don't accidentally split a single utterance across panels
+  // if the model emits a Latin-looking first delta followed by JP.
+  let currentPanel = null;
+
   upstream.addEventListener("message", (ev) => {
     let evt;
     try { evt = JSON.parse(ev.data); } catch { return; }
-    const etype = evt.type || "";
+    const t = evt.type || "";
 
-    if (etype === "session.output_transcript.delta") {
-      const text = evt.delta || evt.text || "";
+    if (t === "conversation.item.input_audio_transcription.delta") {
+      const text = evt.delta || "";
       if (!text) return;
-      const panel = outLang === "en" ? "left" : "right";
-      // Script filter: model hallucinates multilingual fragments when
-      // audio degrades. Drop anything that doesn't belong on this panel.
-      if (panel === "left" && !isCleanEn(text)) return;
-      if (panel === "right" && !isCleanJp(text)) return;
-      safeSend(client, { type: "delta", panel, session: outLang, text });
+      // Decide panel from the first non-empty delta of the utterance.
+      // Sticky until the utterance completes.
+      if (!currentPanel) {
+        currentPanel = isJapanese(text) ? "right" : "left";
+      }
+      // Script filter — drop multilingual hallucination fragments.
+      if (currentPanel === "left" && !isCleanEn(text)) return;
+      if (currentPanel === "right" && !isCleanJp(text)) return;
+      safeSend(client, { type: "input_delta", panel: currentPanel, text });
       return;
     }
 
-    if (etype === "session.input_transcript.delta") {
-      // Dedup: only the EN upstream's input transcription propagates to
-      // the client. The JA upstream's identical transcription would
-      // double-render on the same panel.
-      if (outLang !== "en") return;
-      const text = evt.delta || evt.text || "";
-      if (!text) return;
-      const panel = isJapanese(text) ? "right" : "left";
-      // Script filter — same rules as output.
-      if (panel === "left" && !isCleanEn(text)) return;
-      if (panel === "right" && !isCleanJp(text)) return;
-      safeSend(client, { type: "input_delta", panel, session: outLang, text });
+    if (t === "conversation.item.input_audio_transcription.completed") {
+      const transcript = (evt.transcript || "").trim();
+      if (!transcript) {
+        currentPanel = null;
+        return;
+      }
+      // Re-detect on the full transcript (more reliable than first delta).
+      const sourcePanel = isJapanese(transcript) ? "right" : "left";
+      const targetPanel = sourcePanel === "right" ? "left" : "right";
+      const targetLang = sourcePanel === "right" ? "English" : "Japanese";
+
+      // Final check on source — drop if it's somehow not in our scripts.
+      const sourceOk =
+        sourcePanel === "left" ? isCleanEn(transcript) : isCleanJp(transcript);
+      if (!sourceOk) {
+        currentPanel = null;
+        return;
+      }
+
+      safeSend(client, {
+        type: "input_done",
+        panel: sourcePanel,
+        text: transcript,
+      });
+
+      // Fire translation in the background. Don't await — the next
+      // utterance might already be streaming in.
+      translateAndStream(key, transcript, targetLang, targetPanel, client)
+        .catch((e) => {
+          safeSend(client, {
+            type: "error",
+            message: `translation failed: ${e.message || e}`,
+          });
+        });
+
+      currentPanel = null;
       return;
     }
 
-    if (INPUT_DONE_EVENTS.has(etype)) {
-      if (outLang !== "en") return;
-      const text = evt.transcript || "";
-      if (!text) return;
-      const panel = isJapanese(text) ? "right" : "left";
-      if (panel === "left" && !isCleanEn(text)) return;
-      if (panel === "right" && !isCleanJp(text)) return;
-      safeSend(client, { type: "input_done", panel, session: outLang, text });
-      return;
-    }
-
-    if (etype === "session.output_transcript.done") {
-      const panel = outLang === "en" ? "left" : "right";
-      safeSend(client, { type: "done", panel, session: outLang });
-      return;
-    }
-
-    if (etype === "error" || etype.endsWith(".error")) {
+    if (t === "error" || t.endsWith(".error")) {
       const msg =
         (evt.error && evt.error.message) || evt.message || "upstream error";
-      safeSend(client, { type: "error", message: `${outLang}: ${msg}` });
+      console.error("[transcribe upstream]", msg);
+      safeSend(client, { type: "error", message: msg });
       return;
     }
-    // session.created / session.updated / output_audio.delta etc: ignore.
+    // Lifecycle / VAD events: ignore.
   });
 
   upstream.addEventListener("close", () => {
     safeSend(client, {
       type: "error",
-      message: `${outLang} upstream closed`,
+      message: "transcription upstream closed",
     });
   });
 }
 
-// ── Tiny helpers ───────────────────────────────────────────────────────
+// Translate `text` to `targetLang` via chat completions, streaming
+// chunks back to the client as {type:"delta", panel, text} events,
+// closed with {type:"done", panel}.
+async function translateAndStream(key, text, targetLang, panel, client) {
+  const systemPrompt =
+    `You are a professional simultaneous interpreter. Translate the user's text to ${targetLang}. ` +
+    `Output ONLY the translation. No preamble, no commentary, no quotes, no "Translation:" prefix. ` +
+    `Match the register (casual / polite / keigo). Keep proper nouns intact.`;
+
+  const res = await fetch(CHAT_URL, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${key}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      model: TRANSLATE_MODEL,
+      stream: true,
+      temperature: 0.2,
+      messages: [
+        { role: "system", content: systemPrompt },
+        { role: "user", content: text },
+      ],
+    }),
+  });
+
+  if (!res.ok || !res.body) {
+    let detail = "";
+    try { detail = (await res.text()).slice(0, 200); } catch {}
+    throw new Error(`HTTP ${res.status} ${detail}`);
+  }
+
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    const lines = buffer.split("\n");
+    buffer = lines.pop() || "";
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line.startsWith("data:")) continue;
+      const payload = line.slice(5).trim();
+      if (payload === "[DONE]") continue;
+      let parsed;
+      try { parsed = JSON.parse(payload); } catch { continue; }
+      const delta = parsed?.choices?.[0]?.delta?.content;
+      if (!delta) continue;
+      // Script filter on translation output too.
+      if (panel === "left" && !isCleanEn(delta)) continue;
+      if (panel === "right" && !isCleanJp(delta)) continue;
+      safeSend(client, { type: "delta", panel, text: delta });
+    }
+  }
+  safeSend(client, { type: "done", panel });
+}
+
+// ─── Tiny helpers ───────────────────────────────────────────────────
 function safeSend(ws, obj) {
   try { ws.send(JSON.stringify(obj)); } catch {}
 }
