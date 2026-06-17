@@ -208,10 +208,12 @@ body.live .rec-label { color: var(--ink-red); }
    plus a column tag with the channel letter. */
 main {
   display: grid;
-  grid-template-columns: 1fr 1px 1fr;
+  grid-template-columns: 1fr;  /* single panel — v0.5 JP → EN only */
   min-height: 0;
   position: relative;
 }
+/* Hide the divider and RIGHT panel cleanly when in single-direction mode */
+.col-divider { display: none; }
 .col-divider {
   background: linear-gradient(
     to bottom,
@@ -688,7 +690,9 @@ button {
 
   <div class="col-divider"></div>
 
-  <section class="col" id="col-right">
+  <!-- RIGHT panel kept in DOM so existing JS can still find it, but
+       hidden via CSS — v0.5 simplified to JP → EN only. -->
+  <section class="col" id="col-right" hidden>
     <div class="col-head">
       <span class="channel"><span class="ch-letter">B</span>EN → JP</span>
       <span class="lang">English → 日本語</span>
@@ -996,11 +1000,12 @@ function onWsMessage(ev) {
   const panel = msg.panel;
   if (!panel || !cur[panel]) return;
 
-  // Each panel = one DIRECTION of translation:
-  //   LEFT panel = JP→EN  (input_delta is JP source, delta is EN translation)
-  //   RIGHT panel = EN→JP (input_delta is EN source, delta is JP translation)
-  // Both event types land on the same panel, but on different lines
-  // (src above, tr below).
+  // v0.5 simplification: JP → EN only. RIGHT panel is hidden; we only
+  // honour panel=left events. Translation is now done in this BROWSER
+  // (not the Worker) to escape the Cloudflare 50-subrequest cap that
+  // was killing long sessions.
+  if (panel !== 'left') return;
+
   if (t === 'input_delta') {
     if (!cur[panel].ts) cur[panel].ts = new Date().toISOString();
     cur[panel].src += msg.text || '';
@@ -1008,24 +1013,89 @@ function onWsMessage(ev) {
     renderCurrent(panel);
     return;
   }
-  if (t === 'delta') {
-    if (!cur[panel].ts) cur[panel].ts = new Date().toISOString();
-    cur[panel].tr += msg.text || '';
-    cur[panel].lastDeltaAt = performance.now();
-    renderCurrent(panel);
-    return;
-  }
   if (t === 'input_done') {
-    if (msg.text) cur[panel].src = msg.text;
+    // Server says the JP transcript is finalised. Lock the src line
+    // and fire the translation off to OpenAI directly from here.
+    const transcript = (msg.text || cur[panel].src || '').trim();
+    if (!transcript) return;
+    cur[panel].src = transcript;
     renderCurrent(panel);
+    translateInBrowser(transcript, panel);
     return;
   }
-  if (t === 'done') {
-    // Translation streamed end → commit the whole pair to history.
+  // delta / done are no longer produced by the Worker — translation
+  // happens in browser via translateInBrowser().
+}
+
+// ── Client-side translation ───────────────────────────────────────────
+// On every input_done we fire a streaming chat completion straight from
+// the browser to OpenAI using the user's localStorage key. Each request
+// is independent; no Cloudflare Workers subrequest budget gets touched.
+async function translateInBrowser(jpText, panel) {
+  const key = getKey();
+  if (!key) { diag('no key'); return; }
+  const c = cur[panel];
+  try {
+    const res = await fetch('https://api.openai.com/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Authorization': 'Bearer ' + key,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        model: 'gpt-4o-mini',
+        stream: true,
+        temperature: 0.2,
+        messages: [
+          { role: 'system',
+            content: 'You are a professional simultaneous interpreter. '
+              + 'Translate the user\'s Japanese to natural English. '
+              + 'Match the register (casual / polite / keigo). '
+              + 'Output ONLY the English translation — no preamble, '
+              + 'no commentary, no quotes, no "Translation:" prefix.' },
+          { role: 'user', content: jpText },
+        ],
+      }),
+    });
+    if (!res.ok || !res.body) {
+      const detail = (await res.text()).slice(0, 140);
+      diag('translate HTTP ' + res.status + ': ' + detail);
+      finalizeEntry(panel, c.src, c.tr || '');
+      cur[panel] = { src: '', tr: '', ts: null, lastDeltaAt: 0 };
+      renderCurrent(panel);
+      return;
+    }
+    const reader = res.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '';
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop() || '';
+      for (const raw of lines) {
+        const line = raw.trim();
+        if (!line.startsWith('data:')) continue;
+        const payload = line.slice(5).trim();
+        if (payload === '[DONE]') continue;
+        let parsed; try { parsed = JSON.parse(payload); } catch { continue; }
+        const delta = parsed?.choices?.[0]?.delta?.content;
+        if (!delta) continue;
+        cur[panel].tr += delta;
+        cur[panel].lastDeltaAt = performance.now();
+        renderCurrent(panel);
+      }
+    }
+    // Commit the pair to history
     finalizeEntry(panel, cur[panel].src, cur[panel].tr);
     cur[panel] = { src: '', tr: '', ts: null, lastDeltaAt: 0 };
     renderCurrent(panel);
-    return;
+  } catch (e) {
+    diag('translate error: ' + (e?.message || e));
+    finalizeEntry(panel, c.src, c.tr || '');
+    cur[panel] = { src: '', tr: '', ts: null, lastDeltaAt: 0 };
+    renderCurrent(panel);
   }
 }
 

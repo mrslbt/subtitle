@@ -37,9 +37,10 @@
 
 const TRANSCRIPTION_URL =
   "https://api.openai.com/v1/realtime?intent=transcription";
-const CHAT_URL = "https://api.openai.com/v1/chat/completions";
 const TRANSCRIBE_MODEL = "gpt-4o-transcribe";
-const TRANSLATE_MODEL = "gpt-4o-mini";
+// Translation now happens client-side (browser → OpenAI directly) to
+// avoid the Cloudflare Workers 50-subrequest-per-invocation limit
+// that was killing long sessions. See public/index.html.
 
 // ─── Script detectors / filters ────────────────────────────────────
 // Real-world: the model occasionally hallucinates multilingual training
@@ -301,36 +302,28 @@ function pumpUpstream(upstream, client, key) {
         currentPanel = null;
         return;
       }
-      // Re-detect on the full transcript. Ambiguous (digits / pure
-      // kanji / punctuation) inherits the last known direction.
-      const panel = pickDirection(transcript, lastDirection);
-      lastDirection = panel;
-      const targetLang = panel === "left" ? "English" : "Japanese";
-
-      // Final source script check.
-      const sourceClean =
-        panel === "left" ? isCleanJp(transcript) : isCleanEn(transcript);
-      if (!sourceClean) {
+      // We only handle JP → EN now. If the transcript isn't Japanese,
+      // drop it silently — the user's app is for listening to Japanese.
+      if (!isJapanese(transcript)) {
         currentPanel = null;
         return;
       }
-
+      // Source script must be clean Japanese (no Hangul / Cyrillic leaks).
+      if (!isCleanJp(transcript)) {
+        currentPanel = null;
+        return;
+      }
+      const panel = "left";
+      lastDirection = panel;
       safeSend(client, {
         type: "input_done",
         panel,
         text: transcript,
       });
-
-      // Translation streams to the SAME panel (the translation line
-      // sits under the source line within one direction-pair).
-      translateAndStream(key, transcript, targetLang, panel, client)
-        .catch((e) => {
-          safeSend(client, {
-            type: "error",
-            message: `translation failed: ${e.message || e}`,
-          });
-        });
-
+      // NOTE: translation is now done in the BROWSER (not here) to avoid
+      // the Cloudflare Workers 50-subrequest-per-invocation limit. The
+      // browser fires its own OpenAI chat-completion using the user's
+      // key, which it already holds in localStorage.
       currentPanel = null;
       return;
     }
@@ -351,68 +344,6 @@ function pumpUpstream(upstream, client, key) {
       message: "transcription upstream closed",
     });
   });
-}
-
-// Translate `text` to `targetLang` via chat completions, streaming
-// chunks back to the client as {type:"delta", panel, text} events,
-// closed with {type:"done", panel}.
-async function translateAndStream(key, text, targetLang, panel, client) {
-  const systemPrompt =
-    `You are a professional simultaneous interpreter. Translate the user's text to ${targetLang}. ` +
-    `Output ONLY the translation. No preamble, no commentary, no quotes, no "Translation:" prefix. ` +
-    `Match the register (casual / polite / keigo). Keep proper nouns intact.`;
-
-  const res = await fetch(CHAT_URL, {
-    method: "POST",
-    headers: {
-      "Authorization": `Bearer ${key}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      model: TRANSLATE_MODEL,
-      stream: true,
-      temperature: 0.2,
-      messages: [
-        { role: "system", content: systemPrompt },
-        { role: "user", content: text },
-      ],
-    }),
-  });
-
-  if (!res.ok || !res.body) {
-    let detail = "";
-    try { detail = (await res.text()).slice(0, 200); } catch {}
-    throw new Error(`HTTP ${res.status} ${detail}`);
-  }
-
-  const reader = res.body.getReader();
-  const decoder = new TextDecoder();
-  let buffer = "";
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    buffer += decoder.decode(value, { stream: true });
-    const lines = buffer.split("\n");
-    buffer = lines.pop() || "";
-    for (const raw of lines) {
-      const line = raw.trim();
-      if (!line.startsWith("data:")) continue;
-      const payload = line.slice(5).trim();
-      if (payload === "[DONE]") continue;
-      let parsed;
-      try { parsed = JSON.parse(payload); } catch { continue; }
-      const delta = parsed?.choices?.[0]?.delta?.content;
-      if (!delta) continue;
-      // Script filter on translation output too. Note the swapped
-      // language check: LEFT panel = JP→EN, so the TRANSLATION here
-      // must be clean English. RIGHT panel = EN→JP, so the translation
-      // must be clean Japanese.
-      if (panel === "left" && !isCleanEn(delta)) continue;
-      if (panel === "right" && !isCleanJp(delta)) continue;
-      safeSend(client, { type: "delta", panel, text: delta });
-    }
-  }
-  safeSend(client, { type: "done", panel });
 }
 
 // ─── Tiny helpers ───────────────────────────────────────────────────
