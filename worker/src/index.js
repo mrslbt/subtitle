@@ -239,18 +239,15 @@ async function openTranscriptionSession(key) {
   }
   const ws = res.webSocket;
   ws.accept();
-  // Transcription session config.
-  //
-  // VAD tuning (June 2026 — after Marsel reported "slow + doesn't catch
-  // many" in real meetings):
-  //   threshold 0.35 (was 0.5) — picks up quieter speakers and people
-  //     who don't lean into the mic. Cost: more false-positive triggers
-  //     on cough/paper, but those just produce empty/garbage transcripts.
-  //   prefix_padding_ms 400 (was 300) — catches the start of words that
-  //     were getting clipped.
-  //   silence_duration_ms 500 (was 700) — commits utterances faster,
-  //     ~200ms shaved off translation latency. Risk: chops sentences on
-  //     long thinking pauses, but Marsel preferred fast over polished.
+  // Transcription session config — VAD tuned for transcription quality
+  // over speed. Marsel asked for "normal good translation quality" back
+  // after the aggressive (threshold 0.35, silence 500ms) settings made
+  // utterances feel choppy and trigger on background noise.
+  //   threshold 0.5            — OpenAI default, balanced sensitivity
+  //   prefix_padding_ms 300    — OpenAI default
+  //   silence_duration_ms 700  — generous enough for JP thinking pauses
+  //                              ("えーと…", "あの…") without breaking
+  //                              utterances mid-sentence
   ws.send(JSON.stringify({
     type: "session.update",
     session: {
@@ -261,9 +258,9 @@ async function openTranscriptionSession(key) {
           transcription: { model: TRANSCRIBE_MODEL },
           turn_detection: {
             type: "server_vad",
-            threshold: 0.35,
-            prefix_padding_ms: 400,
-            silence_duration_ms: 500,
+            threshold: 0.5,
+            prefix_padding_ms: 300,
+            silence_duration_ms: 700,
           },
         },
       },
