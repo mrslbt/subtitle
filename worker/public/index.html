@@ -827,6 +827,13 @@ const cur = {
   left:  { src: '', tr: '', ts: null, lastDeltaAt: 0 },
   right: { src: '', tr: '', ts: null, lastDeltaAt: 0 },
 };
+// Per-panel "currently translating" flag. While true, the silence
+// ticker MUST NOT finalize this panel — even if no fresh deltas have
+// arrived for a few seconds, we're still waiting on OpenAI to respond.
+// Without this flag, a translation request taking >2.5s would get
+// committed with an empty tr line and the real translation would
+// then create a phantom second entry.
+const translating = { left: false, right: false };
 // History across panels — used for export. Each entry: {ts, panel, src, tr}
 const history = [];
 
@@ -970,11 +977,14 @@ function renderCurrent(panel) {
 
 // Silence-timer: if a panel has unfinalized text and no new deltas
 // for SILENCE_FINALIZE_MS, commit whatever's there as a finished pair.
+// Skips panels currently waiting on a translation — those are alive
+// even when no deltas are arriving.
 function startSilenceTicker() {
   stopSilenceTicker();
   silenceTicker = setInterval(() => {
     const now = performance.now();
     for (const p of ['left','right']) {
+      if (translating[p]) continue;  // translation in flight — don't kill it
       const c = cur[p];
       if ((c.src || c.tr) && c.lastDeltaAt && (now - c.lastDeltaAt) > SILENCE_FINALIZE_MS) {
         finalizeEntry(p, c.src, c.tr);
@@ -1019,6 +1029,9 @@ function onWsMessage(ev) {
     const transcript = (msg.text || cur[panel].src || '').trim();
     if (!transcript) return;
     cur[panel].src = transcript;
+    // Reset lastDeltaAt so the silence ticker doesn't immediately
+    // finalize the panel while the translation request is in flight.
+    cur[panel].lastDeltaAt = performance.now();
     renderCurrent(panel);
     translateInBrowser(transcript, panel);
     return;
@@ -1035,6 +1048,7 @@ async function translateInBrowser(jpText, panel) {
   const key = getKey();
   if (!key) { diag('no key'); return; }
   const c = cur[panel];
+  translating[panel] = true;
   try {
     const res = await fetch('https://api.openai.com/v1/chat/completions', {
       method: 'POST',
@@ -1060,7 +1074,7 @@ async function translateInBrowser(jpText, panel) {
     if (!res.ok || !res.body) {
       const detail = (await res.text()).slice(0, 140);
       diag('translate HTTP ' + res.status + ': ' + detail);
-      finalizeEntry(panel, c.src, c.tr || '');
+      finalizeEntry(panel, c.src, c.tr || '[translate ' + res.status + ']');
       cur[panel] = { src: '', tr: '', ts: null, lastDeltaAt: 0 };
       renderCurrent(panel);
       return;
@@ -1093,9 +1107,11 @@ async function translateInBrowser(jpText, panel) {
     renderCurrent(panel);
   } catch (e) {
     diag('translate error: ' + (e?.message || e));
-    finalizeEntry(panel, c.src, c.tr || '');
+    finalizeEntry(panel, c.src, c.tr || '[' + (e?.message || 'translate failed') + ']');
     cur[panel] = { src: '', tr: '', ts: null, lastDeltaAt: 0 };
     renderCurrent(panel);
+  } finally {
+    translating[panel] = false;
   }
 }
 
