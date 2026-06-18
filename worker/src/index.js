@@ -92,6 +92,18 @@ function isCleanJp(text) {
   return !JP_FORBIDDEN_RE.test(text);
 }
 
+// Strip foreign-script characters from `text` for the given panel.
+// LEFT (JP→EN) source line should be Japanese — strip non-JP non-Latin.
+// RIGHT (EN→JP) source line should be English — strip non-Latin.
+// Returns the cleaned string (may be empty if everything was foreign).
+function scrubForeign(text, panel) {
+  // Globalized version of the per-panel forbidden ranges
+  const re = panel === "left"
+    ? new RegExp(JP_FORBIDDEN_RE.source, "g")
+    : new RegExp(EN_FORBIDDEN_RE.source, "g");
+  return text.replace(re, "");
+}
+
 // ─── Worker entrypoint ──────────────────────────────────────────────
 export default {
   async fetch(req, env, ctx) {
@@ -227,9 +239,18 @@ async function openTranscriptionSession(key) {
   }
   const ws = res.webSocket;
   ws.accept();
-  // Configure transcription session — gpt-4o-transcribe with server VAD.
-  // silence_duration_ms=700 gives a more natural utterance boundary than
-  // the default 200 (which cuts mid-sentence on natural JP thinking pauses).
+  // Transcription session config.
+  //
+  // VAD tuning (June 2026 — after Marsel reported "slow + doesn't catch
+  // many" in real meetings):
+  //   threshold 0.35 (was 0.5) — picks up quieter speakers and people
+  //     who don't lean into the mic. Cost: more false-positive triggers
+  //     on cough/paper, but those just produce empty/garbage transcripts.
+  //   prefix_padding_ms 400 (was 300) — catches the start of words that
+  //     were getting clipped.
+  //   silence_duration_ms 500 (was 700) — commits utterances faster,
+  //     ~200ms shaved off translation latency. Risk: chops sentences on
+  //     long thinking pauses, but Marsel preferred fast over polished.
   ws.send(JSON.stringify({
     type: "session.update",
     session: {
@@ -240,9 +261,9 @@ async function openTranscriptionSession(key) {
           transcription: { model: TRANSCRIBE_MODEL },
           turn_detection: {
             type: "server_vad",
-            threshold: 0.5,
-            prefix_padding_ms: 300,
-            silence_duration_ms: 700,
+            threshold: 0.35,
+            prefix_padding_ms: 400,
+            silence_duration_ms: 500,
           },
         },
       },
@@ -288,28 +309,33 @@ function pumpUpstream(upstream, client, key) {
       if (!currentPanel) {
         currentPanel = pickDirection(text, lastDirection);
       }
-      // Script filter — drop multilingual hallucination fragments.
-      const sourceClean =
-        currentPanel === "left" ? isCleanJp(text) : isCleanEn(text);
-      if (!sourceClean) return;
-      safeSend(client, { type: "input_delta", panel: currentPanel, text });
+      // Strip foreign-script characters instead of dropping the whole
+      // delta — a single bad char (the model occasionally emits one
+      // Cyrillic / Arabic char mid-Japanese) used to nuke entire
+      // chunks, making the live transcript look broken.
+      const cleaned = scrubForeign(text, currentPanel);
+      if (!cleaned) return;
+      safeSend(client, { type: "input_delta", panel: currentPanel, text: cleaned });
       return;
     }
 
     if (t === "conversation.item.input_audio_transcription.completed") {
-      const transcript = (evt.transcript || "").trim();
+      const raw = (evt.transcript || "").trim();
+      if (!raw) {
+        currentPanel = null;
+        return;
+      }
+      // Strip foreign-script characters from the final transcript before
+      // deciding language. Previously, one Hangul char in an otherwise
+      // perfect JP sentence would drop the ENTIRE utterance silently.
+      const transcript = scrubForeign(raw, "left").trim();
       if (!transcript) {
         currentPanel = null;
         return;
       }
-      // We only handle JP → EN now. If the transcript isn't Japanese,
-      // drop it silently — the user's app is for listening to Japanese.
+      // JP → EN only. Skip if no Japanese script present (English audio,
+      // music, etc).
       if (!isJapanese(transcript)) {
-        currentPanel = null;
-        return;
-      }
-      // Source script must be clean Japanese (no Hangul / Cyrillic leaks).
-      if (!isCleanJp(transcript)) {
         currentPanel = null;
         return;
       }
@@ -320,10 +346,7 @@ function pumpUpstream(upstream, client, key) {
         panel,
         text: transcript,
       });
-      // NOTE: translation is now done in the BROWSER (not here) to avoid
-      // the Cloudflare Workers 50-subrequest-per-invocation limit. The
-      // browser fires its own OpenAI chat-completion using the user's
-      // key, which it already holds in localStorage.
+      // Translation runs in the BROWSER (not here) — see public/index.html.
       currentPanel = null;
       return;
     }
